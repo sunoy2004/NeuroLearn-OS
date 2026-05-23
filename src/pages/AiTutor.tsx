@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Brain, Send, Mic, Sparkles, Zap, History, BookOpen, Lightbulb, ChevronRight, Bot, User, Circle, Cpu, Menu } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { mockConcepts } from "@/data/mockData";
 import type { ChatMessage } from "@/types";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/services/api";
 
 const suggestedPrompts = [
   "Explain serializability like you explained B+ trees.",
@@ -64,7 +64,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 function ContextPanel() {
-  const { agents } = useAppStore();
+  const { agents, concepts } = useAppStore();
   const activeAgent = agents.find((a) => a.status === "active" && a.name === "Adaptive Tutor");
 
   return (
@@ -89,7 +89,7 @@ function ContextPanel() {
           <BookOpen className="size-3" /> Related Concepts
         </p>
         <div className="space-y-2">
-          {mockConcepts.filter((c) => c.subject === "DBMS").slice(0, 5).map((concept) => (
+          {concepts.filter((c) => c.subject === "DBMS").slice(0, 5).map((concept) => (
             <div key={concept.id} className="flex items-center justify-between">
               <span className="text-xs text-foreground/80 truncate">{concept.name}</span>
               <div className="flex items-center gap-1.5 shrink-0 ml-2">
@@ -139,12 +139,16 @@ function ContextPanel() {
 }
 
 export function AiTutor() {
-  const { chatMessages, addMessage } = useAppStore();
+  const { chatMessages, addMessage, fetchConceptGraph } = useAppStore();
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingStep, setThinkingStep] = useState(0);
   const [showContextDrawer, setShowContextDrawer] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchConceptGraph();
+  }, [fetchConceptGraph]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -163,23 +167,42 @@ export function AiTutor() {
 
     let step = 0;
     const interval = setInterval(() => {
-      step++;
+      step = Math.min(step + 1, agentThoughts.length - 1);
       setThinkingStep(step);
-      if (step >= agentThoughts.length) clearInterval(interval);
-    }, 600);
+    }, 500);
 
-    await new Promise((r) => setTimeout(r, 3200));
-    clearInterval(interval);
-    setIsThinking(false);
-    setThinkingStep(0);
+    try {
+      const res = await apiRequest<any>("/api/tutor/chat", {
+        method: "POST",
+        body: JSON.stringify({ message: text })
+      });
+      clearInterval(interval);
+      setIsThinking(false);
+      setThinkingStep(0);
 
-    const reply: ChatMessage = {
-      id: `a-${Date.now()}`, role: "assistant",
-      content: "I've retrieved relevant context from your Qdrant memory store and cross-referenced with your learning profile.\n\nBased on your interaction history (analogy-based learning style), here's a tailored explanation:\n\nThink of it like a filing cabinet — each drawer is a transaction, and you can't open the same drawer simultaneously from two filing clerks. That's the essence of isolation in ACID properties...",
-      timestamp: new Date().toISOString(),
-      agent: "Adaptive Tutor",
-    };
-    addMessage(reply);
+      const reply: ChatMessage = {
+        id: res.id,
+        role: "assistant",
+        content: res.content,
+        timestamp: res.timestamp,
+        agent: res.agent
+      };
+      addMessage(reply);
+    } catch (e) {
+      console.warn("Backend chat failed, playing client mock explanation.");
+      await new Promise((r) => setTimeout(r, 1200));
+      clearInterval(interval);
+      setIsThinking(false);
+      setThinkingStep(0);
+
+      const reply: ChatMessage = {
+        id: `a-${Date.now()}`, role: "assistant",
+        content: "I've retrieved relevant context from your Qdrant memory store and cross-referenced with your learning profile.\n\nBased on your interaction history (analogy-based learning style), here's a tailored explanation:\n\nThink of it like a filing cabinet — each drawer is a transaction, and you can't open the same drawer simultaneously from two filing clerks. That's the essence of isolation in ACID properties...",
+        timestamp: new Date().toISOString(),
+        agent: "Adaptive Tutor",
+      };
+      addMessage(reply);
+    }
   }
 
   return (

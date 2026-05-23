@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Network, Brain, Zap, Filter } from "lucide-react";
-import { mockConcepts } from "@/data/mockData";
+import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
 
 const nodePositions: Record<string, { x: number; y: number }> = {
@@ -25,7 +25,8 @@ function getMasteryColor(mastery: number) {
 function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
   selectedId: string | null; onSelect: (id: string) => void; subjectFilter: string;
 }) {
-  const filtered = subjectFilter === "All" ? mockConcepts : mockConcepts.filter((c) => c.subject === subjectFilter);
+  const { concepts } = useAppStore();
+  const filtered = subjectFilter === "All" ? concepts : concepts.filter((c) => c.subject === subjectFilter);
   const visibleIds = new Set(filtered.map((c) => c.id));
 
   const edges: { from: string; to: string }[] = [];
@@ -40,7 +41,7 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
   return (
     <svg width="100%" viewBox="0 0 860 460" className="w-full" style={{ minHeight: 300 }}>
       <defs>
-        {mockConcepts.map((c) => (
+        {concepts.map((c) => (
           <radialGradient key={c.id} id={`grad-${c.id}`} cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor={getMasteryColor(c.mastery)} stopOpacity={0.3} />
             <stop offset="100%" stopColor={getMasteryColor(c.mastery)} stopOpacity={0} />
@@ -86,18 +87,23 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
 }
 
 export function KnowledgeGraph() {
+  const { concepts, fetchConceptGraph } = useAppStore();
   const [selectedId, setSelectedId] = useState<string | null>("c1");
   const [subjectFilter, setSubjectFilter] = useState("All");
 
-  const selected = mockConcepts.find((c) => c.id === selectedId);
-  const connectedConcepts = selected ? mockConcepts.filter((c) => selected.connections.includes(c.id)) : [];
+  useEffect(() => {
+    fetchConceptGraph();
+  }, [fetchConceptGraph]);
+
+  const selected = concepts.find((c) => c.id === selectedId);
+  const connectedConcepts = selected ? concepts.filter((c) => selected.connections.includes(c.id)) : [];
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Knowledge Graph</h2>
-          <p className="text-sm text-muted-foreground">Semantic concept map · Qdrant vector store · {mockConcepts.length} nodes</p>
+          <p className="text-sm text-muted-foreground">Semantic concept map · Qdrant vector store · {concepts.length} nodes</p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-[10px] text-[var(--neuro-cyan)] border-[var(--neuro-cyan)]/30 gap-1">
@@ -197,10 +203,10 @@ export function KnowledgeGraph() {
             </CardHeader>
             <CardContent className="space-y-3">
               {[
-                { label: "Total Concepts", value: mockConcepts.length, color: "text-primary" },
-                { label: "Avg Mastery", value: `${Math.round(mockConcepts.reduce((s, c) => s + c.mastery, 0) / mockConcepts.length)}%`, color: "text-[var(--neuro-green)]" },
-                { label: "At Risk", value: mockConcepts.filter((c) => c.mastery < 50).length, color: "text-[var(--neuro-rose)]" },
-                { label: "Total Edges", value: mockConcepts.reduce((s, c) => s + c.connections.length, 0), color: "text-[var(--neuro-cyan)]" },
+                { label: "Total Concepts", value: concepts.length, color: "text-primary" },
+                { label: "Avg Mastery", value: `${concepts.length > 0 ? Math.round(concepts.reduce((s, c) => s + c.mastery, 0) / concepts.length) : 0}%`, color: "text-[var(--neuro-green)]" },
+                { label: "At Risk", value: concepts.filter((c) => c.mastery < 50).length, color: "text-[var(--neuro-rose)]" },
+                { label: "Total Edges", value: concepts.reduce((s, c) => s + c.connections.length, 0), color: "text-[var(--neuro-cyan)]" },
               ].map((s) => (
                 <div key={s.label} className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">{s.label}</span>
@@ -219,7 +225,7 @@ export function KnowledgeGraph() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            {mockConcepts.map((c) => (
+            {concepts.map((c) => (
               <button key={c.id} onClick={() => setSelectedId(c.id)}
                 className={cn("p-3 rounded-lg border text-left transition-all", selectedId === c.id ? "border-primary/50 bg-primary/5" : "border-border/40 bg-muted/10 hover:border-primary/30 hover:bg-muted/20")}>
                 <p className="text-xs font-medium mb-1 truncate">{c.name}</p>

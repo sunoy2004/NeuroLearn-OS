@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -7,7 +8,7 @@ import {
 } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Brain, TrendingUp, Zap, BookOpen, Target, Activity, Sparkles, Clock } from "lucide-react";
-import { mockRetentionData, mockLectures, mockConcepts } from "@/data/mockData";
+import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
 
 const weeklyActivity = [
@@ -110,7 +111,13 @@ const aiInsights = [
 ];
 
 export function Analytics() {
-  const avgMastery = Math.round(mockConcepts.reduce((s, c) => s + c.mastery, 0) / mockConcepts.length);
+  const { retentionData, lectures, concepts, fetchDashboardData } = useAppStore();
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  const avgMastery = Math.round(concepts.reduce((s, c) => s + c.mastery, 0) / concepts.length);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -240,7 +247,7 @@ export function Analytics() {
         </CardHeader>
         <CardContent>
           <ChartContainer config={retentionConfig} className="h-[160px] w-full">
-            <AreaChart data={mockRetentionData}>
+            <AreaChart data={retentionData}>
               <defs>
                 <linearGradient id="retGrad2" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.25} />
@@ -291,7 +298,7 @@ export function Analytics() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {mockLectures.map((lecture, i) => {
+            {lectures.map((lecture, i) => {
               const gain = [14, 11, 9, 16, 8][i] ?? 10;
               return (
                 <div key={lecture.id} className="flex items-center gap-4 p-3 rounded-lg border border-border/40 bg-muted/10">

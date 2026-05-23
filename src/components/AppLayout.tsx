@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard,
   Mic,
@@ -26,8 +27,10 @@ import {
   Zap,
   Circle,
   Volume2,
+  Cpu,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { GlobalVoiceController } from "@/components/GlobalVoiceController";
 import type { Page } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -138,12 +141,42 @@ const pageTitles: Record<Page, string> = {
 };
 
 function TopBar({ page }: TopBarProps) {
+  const { voiceListening, setVoiceListening, voiceTranscript, voiceProcessing } = useAppStore();
+
   return (
     <header className="sticky top-0 z-40 flex h-12 items-center gap-3 border-b border-border/50 bg-background/80 backdrop-blur-sm px-4">
       <SidebarTrigger className="size-7 text-muted-foreground hover:text-foreground" />
       <Separator orientation="vertical" className="h-4" />
       <h1 className="text-sm font-semibold">{pageTitles[page]}</h1>
+
+      {voiceListening && (
+        <span className="text-[11px] text-muted-foreground animate-pulse max-w-[200px] sm:max-w-xs truncate ml-2 bg-muted/30 px-2 py-0.5 rounded border border-border/30">
+          Hearing: "{voiceTranscript || 'Speaking...'}"
+        </span>
+      )}
+
       <div className="ml-auto flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "size-7 rounded-full border border-border/50 transition-all",
+            voiceListening
+              ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30"
+              : "hover:bg-accent text-muted-foreground"
+          )}
+          onClick={() => setVoiceListening(!voiceListening)}
+          disabled={voiceProcessing}
+          title="Global Voice Command"
+        >
+          {voiceProcessing ? (
+            <Cpu className="size-3.5 animate-spin text-[var(--neuro-amber)]" />
+          ) : (
+            <Mic className={cn("size-3.5", voiceListening && "animate-pulse")} />
+          )}
+        </Button>
+        <Separator orientation="vertical" className="h-4 hidden sm:block" />
+
         <Badge variant="outline" className="text-[9px] text-[var(--neuro-cyan)] border-[var(--neuro-cyan)]/30 gap-1 hidden sm:flex">
           <Circle className="size-1.5 fill-current animate-pulse" /> Omi
         </Badge>
@@ -163,6 +196,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider>
+      <GlobalVoiceController />
       <NeuroSidebar />
       <SidebarInset className="neuro-grid-bg">
         <TopBar page={currentPage} />

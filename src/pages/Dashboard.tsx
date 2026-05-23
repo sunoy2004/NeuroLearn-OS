@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -10,9 +11,9 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, RadarChart, PolarGrid, PolarAngleAxis, Radar } from "recharts";
 import { ChartContainer, ChartTooltipContent, ChartTooltip } from "@/components/ui/chart";
-import { mockProfile, mockRetentionData, mockMasteryData, mockWeakTopics, mockLectures, mockAgents } from "@/data/mockData";
 import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
+import type { WeakTopic, AgentStatus } from "@/types";
 
 const retentionConfig = { retention: { label: "Retention %", color: "var(--chart-1)" } };
 const masteryConfig = { mastery: { label: "Mastery", color: "var(--chart-2)" } };
@@ -39,7 +40,7 @@ function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }: {
   );
 }
 
-function WeakTopicItem({ topic }: { topic: typeof mockWeakTopics[0] }) {
+function WeakTopicItem({ topic }: { topic: WeakTopic }) {
   const TrendIcon = topic.trend === "declining" ? TrendingDown : topic.trend === "improving" ? TrendingUp : Minus;
   const trendColor = topic.trend === "declining" ? "text-[var(--neuro-rose)]" : topic.trend === "improving" ? "text-[var(--neuro-green)]" : "text-muted-foreground";
   const urgent = topic.daysUntilForgetting <= 2;
@@ -65,7 +66,7 @@ function WeakTopicItem({ topic }: { topic: typeof mockWeakTopics[0] }) {
   );
 }
 
-function AgentItem({ agent }: { agent: typeof mockAgents[0] }) {
+function AgentItem({ agent }: { agent: AgentStatus }) {
   const colors: Record<string, string> = {
     active: "text-[var(--neuro-cyan)] bg-[var(--neuro-cyan)]/10",
     processing: "text-[var(--neuro-amber)] bg-[var(--neuro-amber)]/10",
@@ -85,7 +86,21 @@ function AgentItem({ agent }: { agent: typeof mockAgents[0] }) {
 }
 
 export function Dashboard() {
-  const { setPage } = useAppStore();
+  const { 
+    setPage, 
+    profile, 
+    retentionData, 
+    masteryData, 
+    weakTopics, 
+    lectures, 
+    agents, 
+    fetchDashboardData 
+  } = useAppStore();
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       {/* Hero */}
@@ -98,9 +113,9 @@ export function Dashboard() {
               <Sparkles className="size-4 text-primary" />
               <span className="text-xs uppercase tracking-widest text-primary/70 font-semibold">NEUROLEARN OS — COGNITIVE ENGINE</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight mb-1">Good morning, {mockProfile.name}</h1>
+            <h1 className="text-2xl font-bold tracking-tight mb-1">Good morning, {profile.name}</h1>
             <p className="text-muted-foreground text-sm max-w-lg">
-              Your AI learning companion has processed <span className="text-primary font-semibold">{mockProfile.conceptsMastered} concepts</span> and detected{" "}
+              Your AI learning companion has processed <span className="text-primary font-semibold">{profile.conceptsMastered} concepts</span> and detected{" "}
               <span className="text-[var(--neuro-rose)] font-semibold">5 weak topics</span> at risk of forgetting.
             </p>
           </div>
@@ -127,10 +142,10 @@ export function Dashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Flame} label="Study Streak" value={`${mockProfile.studyStreak}d`} sub="Personal best" color="text-[var(--neuro-amber)]" />
-        <StatCard icon={Clock} label="Study Hours" value={mockProfile.totalHours} sub="This month" color="text-[var(--neuro-cyan)]" />
-        <StatCard icon={Brain} label="Concepts" value={mockProfile.conceptsMastered} sub="Mastered" color="text-[var(--neuro-green)]" />
-        <StatCard icon={Target} label="Exam Readiness" value={`${mockProfile.examReadiness}%`} sub="Estimated" color="text-primary" />
+        <StatCard icon={Flame} label="Study Streak" value={`${profile.studyStreak}d`} sub="Personal best" color="text-[var(--neuro-amber)]" />
+        <StatCard icon={Clock} label="Study Hours" value={profile.totalHours} sub="This month" color="text-[var(--neuro-cyan)]" />
+        <StatCard icon={Brain} label="Concepts" value={profile.conceptsMastered} sub="Mastered" color="text-[var(--neuro-green)]" />
+        <StatCard icon={Target} label="Exam Readiness" value={`${profile.examReadiness}%`} sub="Estimated" color="text-primary" />
       </div>
 
       {/* Charts */}
@@ -149,7 +164,7 @@ export function Dashboard() {
           </CardHeader>
           <CardContent>
             <ChartContainer config={retentionConfig} className="h-[180px] w-full">
-              <AreaChart data={mockRetentionData}>
+              <AreaChart data={retentionData}>
                 <defs>
                   <linearGradient id="retGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.25} />
@@ -173,7 +188,7 @@ export function Dashboard() {
           </CardHeader>
           <CardContent>
             <ChartContainer config={masteryConfig} className="h-[180px] w-full">
-              <RadarChart data={mockMasteryData} cx="50%" cy="50%" outerRadius="70%">
+              <RadarChart data={masteryData} cx="50%" cy="50%" outerRadius="70%">
                 <PolarGrid stroke="var(--border)" />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: "var(--muted-foreground)" }} />
                 <Radar name="mastery" dataKey="mastery" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.15} strokeWidth={1.5} />
@@ -224,7 +239,7 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 pt-0">
-            {mockWeakTopics.slice(0, 4).map((t) => <WeakTopicItem key={t.name} topic={t} />)}
+            {weakTopics.slice(0, 4).map((t) => <WeakTopicItem key={t.name} topic={t} />)}
           </CardContent>
         </Card>
 
@@ -240,7 +255,7 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 pt-0">
-            {mockLectures.slice(0, 4).map((lecture) => (
+            {lectures.slice(0, 4).map((lecture) => (
               <div key={lecture.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/40 bg-muted/10 hover:bg-muted/20 transition-colors cursor-pointer">
                 <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
                   <BookOpen className="size-3.5 text-primary" />
@@ -263,7 +278,7 @@ export function Dashboard() {
             <CardDescription className="text-xs">Lyzr orchestration network</CardDescription>
           </CardHeader>
           <CardContent className="pt-0 divide-y divide-border/30">
-            {mockAgents.map((agent) => <AgentItem key={agent.id} agent={agent} />)}
+            {agents.map((agent) => <AgentItem key={agent.id} agent={agent} />)}
           </CardContent>
         </Card>
       </div>
@@ -275,15 +290,15 @@ export function Dashboard() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">Weekly Learning Goal</span>
-                <span className="text-sm font-bold text-primary">{mockProfile.weeklyGoalProgress}%</span>
+                <span className="text-sm font-bold text-primary">{profile.weeklyGoalProgress}%</span>
               </div>
-              <Progress value={mockProfile.weeklyGoalProgress} className="h-2" />
+              <Progress value={profile.weeklyGoalProgress} className="h-2" />
               <p className="text-xs text-muted-foreground mt-1">5 of 7 days active · 3 lectures processed · 12 concepts strengthened</p>
             </div>
             <Separator orientation="vertical" className="h-12 hidden sm:block" />
             <div className="text-right shrink-0">
               <p className="text-xs text-muted-foreground">Learning style detected</p>
-              <p className="text-sm font-semibold text-primary">{mockProfile.preferredStyle}</p>
+              <p className="text-sm font-semibold text-primary">{profile.preferredStyle}</p>
               <p className="text-[10px] text-muted-foreground/60">Qdrant profile · 47 interactions</p>
             </div>
           </div>

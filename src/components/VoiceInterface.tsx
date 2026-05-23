@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mic, MicOff, Bot, User, Zap, Activity, Brain, Cpu } from "lucide-react";
-import { useVoiceCapture } from "@/hooks/useVoiceCapture";
+import { useAppStore } from "@/store/appStore";
 import { masterOrchestrator } from "@/services/agents/orchestrator";
 import { storeVoiceCommand, getCognitiveProfile } from "@/services/memory/qdrantClient";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
@@ -30,15 +30,17 @@ export function VoiceInterface() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const {
-    isListening,
-    transcript,
-    isProcessing,
-    lastCommand,
-    error,
-    startListening,
-    stopListening,
-    simulatedMode,
-  } = useVoiceCapture();
+    voiceListening: isListening,
+    voiceTranscript: transcript,
+    voiceProcessing: isProcessing,
+    lastVoiceCommand: lastCommand,
+    voiceError: error,
+    setVoiceListening,
+  } = useAppStore();
+
+  const startListening = () => setVoiceListening(true);
+  const stopListening = () => setVoiceListening(false);
+  const simulatedMode = false;
 
   useEffect(() => {
     async function loadProfile() {

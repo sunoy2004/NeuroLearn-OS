@@ -6,7 +6,6 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Mic, Upload, Square, FileAudio, Brain, Tag, Clock, CheckCircle, Zap, BookOpen, Layers, Sparkles, Activity } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { mockLectures } from "@/data/mockData";
 import { cn } from "@/lib/utils";
 
 const transcriptLines = [
@@ -69,10 +68,14 @@ function ProcessingStep({ step }: { step: typeof processingSteps[0] }) {
 }
 
 export function LectureStudio() {
-  const { isRecording, setRecording, recordingTime, setRecordingTime } = useAppStore();
+  const { isRecording, setRecording, recordingTime, setRecordingTime, lectures, fetchDashboardData } = useAppStore();
   const [showTranscript, setShowTranscript] = useState(false);
   const [processingLecture, setProcessingLecture] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   useEffect(() => {
     if (isRecording) {
@@ -216,10 +219,10 @@ export function LectureStudio() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <BookOpen className="size-4 text-primary" /> Lecture Library
               </CardTitle>
-              <CardDescription className="text-xs">{mockLectures.length} lectures · Qdrant memory</CardDescription>
+              <CardDescription className="text-xs">{lectures.length} lectures · Qdrant memory</CardDescription>
             </CardHeader>
             <CardContent className="pt-0 space-y-2">
-              {mockLectures.map((lecture) => (
+              {lectures.map((lecture) => (
                 <div key={lecture.id} className="p-3 rounded-lg border border-border/40 hover:border-primary/30 bg-muted/10 hover:bg-muted/20 transition-all cursor-pointer">
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <p className="text-xs font-medium leading-tight">{lecture.title}</p>

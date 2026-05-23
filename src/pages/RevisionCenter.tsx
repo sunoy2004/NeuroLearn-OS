@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp } from "lucide-react";
-import { mockFlashcards, mockQuizQuestions, mockWeakTopics } from "@/data/mockData";
+// Seed fallbacks handled in store
 import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/services/api";
 
 const learningGoals = [
   { id: 1, title: "Master DBMS in 30 days", subjects: ["Normalization", "Transactions", "Indexing"], progress: 62, deadline: "2026-06-23" },
@@ -32,13 +33,26 @@ const resources = [
 ];
 
 function FlashcardViewer() {
-  const { activeFlashcardIndex, setActiveFlashcardIndex } = useAppStore();
+  const { activeFlashcardIndex, setActiveFlashcardIndex, flashcards } = useAppStore();
   const [flipped, setFlipped] = useState(false);
-  const card = mockFlashcards[activeFlashcardIndex];
 
-  function rate(_rating: "hard" | "ok" | "easy") {
+  if (!flashcards || flashcards.length === 0) {
+    return <p className="text-sm text-muted-foreground text-center py-8">No flashcards available.</p>;
+  }
+
+  const card = flashcards[activeFlashcardIndex] || flashcards[0];
+
+  async function rate(rating: "hard" | "ok" | "easy") {
+    try {
+      await apiRequest(`/api/revision/flashcards/${card.id}/review`, {
+        method: "POST",
+        body: JSON.stringify({ rating }),
+      });
+    } catch (e) {
+      console.warn("Spaced repetition backend offline. Logging locally.");
+    }
     setFlipped(false);
-    if (activeFlashcardIndex < mockFlashcards.length - 1) {
+    if (activeFlashcardIndex < flashcards.length - 1) {
       setTimeout(() => setActiveFlashcardIndex(activeFlashcardIndex + 1), 200);
     }
   }
@@ -46,10 +60,10 @@ function FlashcardViewer() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{activeFlashcardIndex + 1} / {mockFlashcards.length} cards</p>
+        <p className="text-xs text-muted-foreground">{activeFlashcardIndex + 1} / {flashcards.length} cards</p>
         <Badge variant="outline" className="text-[10px]">{card.subject} · {card.topic}</Badge>
       </div>
-      <Progress value={(activeFlashcardIndex / mockFlashcards.length) * 100} className="h-1" />
+      <Progress value={(activeFlashcardIndex / flashcards.length) * 100} className="h-1" />
 
       <div className="relative h-56 cursor-pointer" onClick={() => setFlipped(!flipped)}
         style={{ perspective: "1000px" }}>
@@ -103,18 +117,23 @@ function FlashcardViewer() {
 }
 
 function QuizViewer() {
-  const { quizIndex, setQuizIndex, quizAnswers, setQuizAnswer } = useAppStore();
-  const question = mockQuizQuestions[quizIndex];
+  const { quizIndex, setQuizIndex, quizAnswers, setQuizAnswer, quizQuestions } = useAppStore();
+
+  if (!quizQuestions || quizQuestions.length === 0) {
+    return <p className="text-sm text-muted-foreground text-center py-8">No quiz questions loaded.</p>;
+  }
+
+  const question = quizQuestions[quizIndex] || quizQuestions[0];
   const answered = quizAnswers[question.id] !== undefined;
   const correct = quizAnswers[question.id] === question.correct;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">Question {quizIndex + 1} / {mockQuizQuestions.length}</p>
+        <p className="text-xs text-muted-foreground">Question {quizIndex + 1} / {quizQuestions.length}</p>
         <Badge variant="outline" className="text-[10px]">{question.topic}</Badge>
       </div>
-      <Progress value={(quizIndex / mockQuizQuestions.length) * 100} className="h-1" />
+      <Progress value={(quizIndex / quizQuestions.length) * 100} className="h-1" />
 
       <Card className="border-border/50">
         <CardContent className="pt-5 pb-5">
@@ -163,6 +182,37 @@ function QuizViewer() {
 
 export function RevisionCenter() {
   const [showGoalDialog, setShowGoalDialog] = useState(false);
+  const { weakTopics, fetchDashboardData, fetchFlashcards, fetchQuizQuestions } = useAppStore();
+  
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalTopics, setGoalTopics] = useState("");
+  const [goalTimeline, setGoalTimeline] = useState("");
+  const [goalDate, setGoalDate] = useState("");
+
+  useEffect(() => {
+    fetchDashboardData();
+    fetchFlashcards();
+    fetchQuizQuestions("DBMS");
+  }, [fetchDashboardData, fetchFlashcards, fetchQuizQuestions]);
+
+  async function handleCreateGoal() {
+    try {
+      await apiRequest("/api/revision/goals", {
+        method: "POST",
+        body: JSON.stringify({
+          title: goalTitle,
+          topics: goalTopics,
+          timeline: parseInt(goalTimeline) || 30,
+          targetDate: goalDate || new Date().toISOString().split("T")[0]
+        })
+      });
+      setShowGoalDialog(false);
+      fetchDashboardData();
+    } catch (e) {
+      console.warn("Failed creating goal on server.");
+      setShowGoalDialog(false);
+    }
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
@@ -189,23 +239,23 @@ export function RevisionCenter() {
               <div className="space-y-4 py-4">
                 <div>
                   <label className="text-sm font-medium">Goal Title</label>
-                  <Input placeholder="e.g., Master DBMS in 30 days" />
+                  <Input value={goalTitle} onChange={(e) => setGoalTitle(e.target.value)} placeholder="e.g., Master DBMS in 30 days" />
                 </div>
                 <div>
                   <label className="text-sm font-medium">Topics</label>
-                  <Textarea placeholder="List topics to cover..." rows={3} />
+                  <Textarea value={goalTopics} onChange={(e) => setGoalTopics(e.target.value)} placeholder="List topics to cover..." rows={3} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium">Timeline</label>
-                    <Input type="number" placeholder="Days" />
+                    <Input value={goalTimeline} onChange={(e) => setGoalTimeline(e.target.value)} type="number" placeholder="Days" />
                   </div>
                   <div>
                     <label className="text-sm font-medium">Target Date</label>
-                    <Input type="date" />
+                    <Input value={goalDate} onChange={(e) => setGoalDate(e.target.value)} type="date" />
                   </div>
                 </div>
-                <Button className="w-full">Create Goal</Button>
+                <Button className="w-full" onClick={handleCreateGoal}>Create Goal</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -260,7 +310,7 @@ export function RevisionCenter() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Spaced Repetition</CardTitle>
-                  <CardDescription className="text-xs">SM-2 algorithm · {mockFlashcards.length} cards due</CardDescription>
+                  <CardDescription className="text-xs">SM-2 algorithm · {flashcards.length} cards due</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FlashcardViewer />
@@ -349,7 +399,7 @@ export function RevisionCenter() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 pt-0">
-              {mockWeakTopics.map((t) => {
+              {weakTopics.map((t) => {
                 const urgentColor = t.daysUntilForgetting <= 2 ? "var(--neuro-rose)" : t.daysUntilForgetting <= 4 ? "var(--neuro-amber)" : "var(--neuro-green)";
                 return (
                   <div key={t.name}>
