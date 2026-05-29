@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
-import { WS_BASE } from "@/services/api";
+import { AGENT_WS_BASE } from "@/services/api";
 import { createVoiceCommand } from "@/services/voiceIntentClassifier";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
 import type { VoiceCommand, VoiceTranscript, VoiceIntent } from "@/types";
+import { getSpeechRecognitionLang } from "@/config/speechLanguages";
 
-// Standard browser speech recognition typings
 const SpeechRecognition =
   (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -18,6 +18,7 @@ export function GlobalVoiceController() {
     setVoiceError,
     setLastVoiceCommand,
     setPage,
+    addAgentNotification,
   } = useAppStore();
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -52,10 +53,11 @@ export function GlobalVoiceController() {
   const startListeningSession = () => {
     setVoiceError(null);
     setVoiceTranscript("");
+    addAgentNotification("Opening voice control stream...", "info", "Orchestrator");
 
     try {
-      // 1. Initialize web socket connection
-      const wsUrl = `${WS_BASE.replace("http", "ws")}/api/voice/ws/voice-stream`;
+      // 1. Initialize web socket connection to the separate Agent Service
+      const wsUrl = `${AGENT_WS_BASE.replace("http", "ws")}/ws/agent-stream`;
       console.log("Global voice socket connecting to:", wsUrl);
       const ws = new WebSocket(wsUrl);
       socketRef.current = ws;
@@ -63,6 +65,7 @@ export function GlobalVoiceController() {
       ws.onopen = () => {
         console.log("Global voice socket connected.");
         ws.send("clear");
+        addAgentNotification("Connected to Agent Service. Listening...", "success", "Orchestrator");
 
         // 2. Request mic permission and stream audio
         navigator.mediaDevices
@@ -85,6 +88,7 @@ export function GlobalVoiceController() {
             console.error("Microphone permission denied:", err);
             setVoiceError("Microphone access denied.");
             setVoiceListening(false);
+            addAgentNotification("Microphone permission denied.", "warning", "Orchestrator");
           });
       };
 
@@ -94,6 +98,11 @@ export function GlobalVoiceController() {
         if (data.event === "result") {
           setVoiceProcessing(false);
           setVoiceTranscript(data.transcript);
+
+          const agentName = data.agentExecuted
+            ? data.agentExecuted.charAt(0).toUpperCase() + data.agentExecuted.slice(1) + "Agent"
+            : "Orchestrator";
+          addAgentNotification(`Heard: "${data.transcript}"`, "agent", agentName);
 
           // Play response TTS audio
           if (data.audioUrl) {
@@ -119,8 +128,16 @@ export function GlobalVoiceController() {
           voiceSessionManager.recordCommand(command);
           setLastVoiceCommand(command);
 
-          // Route navigation based on the intent
-          routeVoiceAction(data.intent, data.transcript);
+          // Execute action emitted by the autonomous AI agent
+          if (data.action && data.action.action !== "none") {
+            executeAgentAction(data.action);
+          } else {
+            routeVoiceAction(data.intent, data.transcript);
+          }
+
+          if (data.response) {
+            addAgentNotification(data.response, "info", agentName);
+          }
         }
       };
 
@@ -128,6 +145,7 @@ export function GlobalVoiceController() {
         console.error("Voice WebSocket error:", err);
         setVoiceError("Speech connection error.");
         setVoiceListening(false);
+        addAgentNotification("Speech connection failed. Verify Agent Service is running on port 8001.", "warning", "Orchestrator");
       };
 
       // 3. Start client-side Web Speech Recognition for instant UI transcription updates
@@ -135,7 +153,7 @@ export function GlobalVoiceController() {
         const rec = new SpeechRecognition();
         rec.continuous = true;
         rec.interimResults = true;
-        rec.lang = "en-US";
+        rec.lang = getSpeechRecognitionLang();
 
         rec.onresult = (e: any) => {
           let interimTranscript = "";
@@ -191,6 +209,46 @@ export function GlobalVoiceController() {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       setVoiceProcessing(true);
       socketRef.current.send("process_recording");
+      addAgentNotification("Processing voice command...", "info", "Orchestrator");
+    }
+  };
+
+  const executeAgentAction = (action: any) => {
+    console.log("Autonomous agent executing action:", action);
+    
+    switch (action.action) {
+      case "navigate":
+        if (action.target) {
+          setPage(action.target);
+          addAgentNotification(`Navigated to ${action.target}`, "success", "NavigationAgent");
+        }
+        break;
+      case "start_recording":
+        setPage("lecture-studio");
+        useAppStore.getState().setRecording(true);
+        addAgentNotification("Started lecture recording session", "success", "LectureAgent");
+        break;
+      case "stop_recording":
+        useAppStore.getState().setRecording(false);
+        addAgentNotification("Stopped lecture recording session", "success", "LectureAgent");
+        break;
+      case "open_quiz":
+        setPage("revision");
+        if (action.payload?.topic) {
+          useAppStore.getState().fetchQuizQuestions(action.payload.topic);
+          addAgentNotification(`Active quiz generated for ${action.payload.topic}`, "success", "QuizAgent");
+        }
+        break;
+      case "open_modal":
+        console.log(`Autonomous agent triggered modal: ${action.target}`);
+        addAgentNotification(`Opened modal interface: ${action.target}`, "success", "Orchestrator");
+        break;
+      case "display_summary":
+        console.log("Autonomous agent generated lecture summary:", action.payload);
+        addAgentNotification(`Generated lecture summary outline`, "success", "SummaryAgent");
+        break;
+      default:
+        break;
     }
   };
 

@@ -7,33 +7,17 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp } from "lucide-react";
-// Seed fallbacks handled in store
+import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp, FileText, ExternalLink } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
+import { quizStore } from "@/services/quizStore";
 import { apiRequest } from "@/services/api";
-
-const learningGoals = [
-  { id: 1, title: "Master DBMS in 30 days", subjects: ["Normalization", "Transactions", "Indexing"], progress: 62, deadline: "2026-06-23" },
-  { id: 2, title: "OS Kernel Deep Dive", subjects: ["Memory Management", "Scheduling"], progress: 45, deadline: "2026-07-15" },
-];
-
-const roadmapItems = [
-  { id: "r1", name: "Arrays & Hashing", prereqs: [], estimated: "3 days", difficulty: "Easy" },
-  { id: "r2", name: "Linked Lists", prereqs: ["r1"], estimated: "4 days", difficulty: "Easy" },
-  { id: "r3", name: "Trees", prereqs: ["r2"], estimated: "7 days", difficulty: "Medium" },
-  { id: "r4", name: "Graphs", prereqs: ["r3"], estimated: "8 days", difficulty: "Medium" },
-  { id: "r5", name: "Advanced Algorithms", prereqs: ["r4"], estimated: "10 days", difficulty: "Hard" },
-];
-
-const resources = [
-  { topic: "Normalization", video: "https://youtu.be/...", article: "https://...", time: "45 min", difficulty: "Intermediate" },
-  { topic: "B+ Trees", video: "https://youtu.be/...", article: "https://...", time: "60 min", difficulty: "Advanced" },
-  { topic: "Transactions", video: "https://youtu.be/...", article: "https://...", time: "50 min", difficulty: "Intermediate" },
-];
+import { useAgent } from "@/context/AgentContext";
 
 function FlashcardViewer() {
-  const { activeFlashcardIndex, setActiveFlashcardIndex, flashcards } = useAppStore();
+  const activeFlashcardIndex = useAppStore((s) => s.activeFlashcardIndex);
+  const setActiveFlashcardIndex = useAppStore((s) => s.setActiveFlashcardIndex);
+  const flashcards = useAppStore((s) => s.flashcards);
   const [flipped, setFlipped] = useState(false);
 
   if (!flashcards || flashcards.length === 0) {
@@ -69,6 +53,7 @@ function FlashcardViewer() {
         style={{ perspective: "1000px" }}>
         <div className={cn("relative w-full h-full transition-transform duration-500")}
           style={{ transformStyle: "preserve-3d", transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)" }}>
+          {/* Front */}
           <div className="absolute inset-0 rounded-xl border border-primary/30 bg-card flex flex-col items-center justify-center p-6 text-center"
             style={{ backfaceVisibility: "hidden" }}>
             <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
@@ -77,6 +62,7 @@ function FlashcardViewer() {
             <p className="text-lg font-semibold leading-snug">{card.front}</p>
             <p className="text-xs text-muted-foreground mt-3">Click to reveal answer</p>
           </div>
+          {/* Back */}
           <div className="absolute inset-0 rounded-xl border border-[var(--neuro-green)]/30 bg-card flex flex-col items-center justify-center p-6 text-center"
             style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}>
             <div className="size-8 rounded-lg bg-[var(--neuro-green)]/10 flex items-center justify-center mb-3">
@@ -105,7 +91,7 @@ function FlashcardViewer() {
         <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
           <span>Ease: {card.ease}</span>
           <span>Interval: {card.interval}d</span>
-          <span>Due: {card.dueDate}</span>
+          <span>Due: {card.dueDate || "Today"}</span>
         </div>
       )}
 
@@ -117,7 +103,11 @@ function FlashcardViewer() {
 }
 
 function QuizViewer() {
-  const { quizIndex, setQuizIndex, quizAnswers, setQuizAnswer, quizQuestions } = useAppStore();
+  const quizIndex = useAppStore((s) => s.quizIndex);
+  const setQuizIndex = useAppStore((s) => s.setQuizIndex);
+  const quizAnswers = useAppStore((s) => s.quizAnswers);
+  const setQuizAnswer = useAppStore((s) => s.setQuizAnswer);
+  const quizQuestions = useAppStore((s) => s.quizQuestions);
 
   if (!quizQuestions || quizQuestions.length === 0) {
     return <p className="text-sm text-muted-foreground text-center py-8">No quiz questions loaded.</p>;
@@ -126,6 +116,11 @@ function QuizViewer() {
   const question = quizQuestions[quizIndex] || quizQuestions[0];
   const answered = quizAnswers[question.id] !== undefined;
   const correct = quizAnswers[question.id] === question.correct;
+
+  function handleAnswer(index: number) {
+    setQuizAnswer(question.id, index);
+    quizStore.recordAttempt(question.id, question.topic, index, question.correct);
+  }
 
   return (
     <div className="space-y-4">
@@ -149,7 +144,7 @@ function QuizViewer() {
           if (answered && isCorrect) cls = "border-[var(--neuro-green)]/40 bg-[var(--neuro-green)]/5";
           else if (answered && isSelected && !isCorrect) cls = "border-[var(--neuro-rose)]/40 bg-[var(--neuro-rose)]/5";
           return (
-            <button key={i} disabled={answered} onClick={() => setQuizAnswer(question.id, i)}
+            <button key={i} disabled={answered} onClick={() => handleAnswer(i)}
               className={cn("w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-all text-sm", cls)}>
               <span className="size-5 rounded-full border flex items-center justify-center shrink-0 text-[10px] font-bold">
                 {String.fromCharCode(65 + i)}
@@ -171,7 +166,7 @@ function QuizViewer() {
         </div>
       )}
 
-      {answered && quizIndex < mockQuizQuestions.length - 1 && (
+      {answered && quizIndex < quizQuestions.length - 1 && (
         <Button className="w-full gap-2" onClick={() => setQuizIndex(quizIndex + 1)}>
           Next Question <ChevronRight className="size-4" />
         </Button>
@@ -182,7 +177,19 @@ function QuizViewer() {
 
 export function RevisionCenter() {
   const [showGoalDialog, setShowGoalDialog] = useState(false);
-  const { weakTopics, fetchDashboardData, fetchFlashcards, fetchQuizQuestions } = useAppStore();
+  const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
+  const [selectedLectureId, setSelectedLectureId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("flashcards");
+
+  const weakTopics = useAppStore((s) => s.weakTopics);
+  const fetchDashboardData = useAppStore((s) => s.fetchDashboardData);
+  const fetchFlashcards = useAppStore((s) => s.fetchFlashcards);
+  const fetchQuizQuestions = useAppStore((s) => s.fetchQuizQuestions);
+  const flashcards = useAppStore((s) => s.flashcards);
+  const learningGoals = useAppStore((s) => s.learningGoals);
+  const fetchLearningGoals = useAppStore((s) => s.fetchLearningGoals);
+  const lectures = useAppStore((s) => s.lectures);
+  const profile = useAppStore((s) => s.profile);
   
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTopics, setGoalTopics] = useState("");
@@ -192,8 +199,21 @@ export function RevisionCenter() {
   useEffect(() => {
     fetchDashboardData();
     fetchFlashcards();
-    fetchQuizQuestions("DBMS");
-  }, [fetchDashboardData, fetchFlashcards, fetchQuizQuestions]);
+    fetchLearningGoals();
+  }, [fetchDashboardData, fetchFlashcards, fetchLearningGoals]);
+
+  // Set initial selected goal and lecture if available
+  useEffect(() => {
+    if (learningGoals.length > 0 && selectedGoalId === null) {
+      setSelectedGoalId(learningGoals[0].id);
+    }
+  }, [learningGoals, selectedGoalId]);
+
+  useEffect(() => {
+    if (lectures.length > 0 && selectedLectureId === null) {
+      setSelectedLectureId(lectures[0].id);
+    }
+  }, [lectures, selectedLectureId]);
 
   async function handleCreateGoal() {
     try {
@@ -207,6 +227,7 @@ export function RevisionCenter() {
         })
       });
       setShowGoalDialog(false);
+      fetchLearningGoals();
       fetchDashboardData();
     } catch (e) {
       console.warn("Failed creating goal on server.");
@@ -214,17 +235,22 @@ export function RevisionCenter() {
     }
   }
 
+  const selectedGoal = learningGoals.find(g => g.id === selectedGoalId) || learningGoals[0];
+  const selectedLecture = lectures.find(l => l.id === selectedLectureId) || lectures[0];
+
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Revision Center</h2>
-          <p className="text-sm text-muted-foreground">SM-2 spaced repetition · Forgetting curve · Lyzr scheduling</p>
+          <p className="text-sm text-muted-foreground">SM-2 spaced repetition · Forgetting curve · Agent scheduling</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] text-[var(--neuro-rose)] border-[var(--neuro-rose)]/30 gap-1">
-            <AlertTriangle className="size-3" /> 5 Due Today
-          </Badge>
+          {flashcards.length > 0 && (
+            <Badge variant="outline" className="text-[10px] text-[var(--neuro-rose)] border-[var(--neuro-rose)]/30 gap-1">
+              <AlertTriangle className="size-3" /> {flashcards.length} Due Today
+            </Badge>
+          )}
           <Dialog open={showGoalDialog} onOpenChange={setShowGoalDialog}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-2 neuro-glow-sm">
@@ -262,10 +288,17 @@ export function RevisionCenter() {
         </div>
       </div>
 
-      {/* Learning Goals */}
+      {/* Learning Goals Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {learningGoals.map((goal) => (
-          <Card key={goal.id} className="border-border/50">
+          <Card 
+            key={goal.id} 
+            className={cn(
+              "border-border/50 transition-all cursor-pointer hover:border-primary/40",
+              selectedGoalId === goal.id && "border-primary/60 bg-primary/5"
+            )}
+            onClick={() => setSelectedGoalId(goal.id)}
+          >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -282,15 +315,33 @@ export function RevisionCenter() {
                   <Badge key={s} variant="secondary" className="text-[10px]">{s}</Badge>
                 ))}
               </div>
-              <Button variant="outline" size="sm" className="w-full">View Roadmap</Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedGoalId(goal.id);
+                  setActiveTab("roadmap");
+                }}
+              >
+                View Roadmap
+              </Button>
             </CardContent>
           </Card>
         ))}
+        {learningGoals.length === 0 && (
+          <div className="col-span-2 py-8 border border-dashed border-border/50 rounded-xl flex flex-col items-center justify-center text-center">
+            <TrendingUp className="size-8 text-muted-foreground/40 mb-2" />
+            <p className="text-sm font-medium">No Learning Goals Created Yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Add a goal or ask the Voice Companion to set one.</p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <Tabs defaultValue="flashcards">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="mb-4">
               <TabsTrigger value="flashcards" className="gap-2">
                 <BookOpen className="size-3.5" /> Flashcards
@@ -298,11 +349,11 @@ export function RevisionCenter() {
               <TabsTrigger value="quiz" className="gap-2">
                 <Brain className="size-3.5" /> Quiz
               </TabsTrigger>
+              <TabsTrigger value="notes" className="gap-2">
+                <FileText className="size-3.5" /> Study Notes
+              </TabsTrigger>
               <TabsTrigger value="roadmap" className="gap-2">
                 <TrendingUp className="size-3.5" /> Roadmap
-              </TabsTrigger>
-              <TabsTrigger value="resources" className="gap-2">
-                <ZapIcon className="size-3.5" /> Resources
               </TabsTrigger>
             </TabsList>
 
@@ -322,7 +373,7 @@ export function RevisionCenter() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Adaptive Quiz</CardTitle>
-                  <CardDescription className="text-xs">Generated by Lyzr · Targets weak areas</CardDescription>
+                  <CardDescription className="text-xs">Generated dynamically · Targets weakness vectors</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <QuizViewer />
@@ -330,60 +381,89 @@ export function RevisionCenter() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="roadmap">
+            <TabsContent value="notes">
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold">Learning Roadmap</CardTitle>
-                  <CardDescription className="text-xs">Recommended learning progression</CardDescription>
+                  <CardTitle className="text-sm font-semibold">Lecture-Derived Revision Notes</CardTitle>
+                  <CardDescription className="text-xs">Compiled automatically by Notes Agent</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {roadmapItems.map((item) => (
-                    <div key={item.id} className="flex items-start gap-3 p-3 rounded-lg border border-border/40 hover:border-primary/30 transition-colors">
-                      <div className="mt-1">
-                        {item.prereqs.length > 0 ? (
-                          <div className="size-5 rounded-full border-2 border-[var(--neuro-amber)] flex items-center justify-center">
-                            <div className="size-2 rounded-full bg-[var(--neuro-amber)]" />
-                          </div>
-                        ) : (
-                          <CheckCircle className="size-5 text-[var(--neuro-green)]" />
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2 items-center overflow-x-auto pb-2 border-b border-border/50">
+                    {lectures.map((l) => (
+                      <Button
+                        key={l.id}
+                        variant={selectedLectureId === l.id ? "secondary" : "ghost"}
+                        size="sm"
+                        className="text-xs shrink-0"
+                        onClick={() => setSelectedLectureId(l.id)}
+                      >
+                        {l.title}
+                      </Button>
+                    ))}
+                    {lectures.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No lecture logs found.</p>
+                    )}
+                  </div>
+                  {selectedLecture ? (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-sm font-semibold">{selectedLecture.title}</h3>
+                          <p className="text-xs text-muted-foreground">{selectedLecture.subject} · {selectedLecture.date}</p>
+                        </div>
+                        {selectedLecture.summary && (
+                          <Badge variant="outline" className="text-[10px]">Summarized</Badge>
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{item.name}</p>
-                        <div className="flex gap-2 text-[10px] text-muted-foreground mt-1">
-                          <span>{item.estimated}</span>
-                          <span>·</span>
-                          <Badge variant="outline" className="text-[9px]">{item.difficulty}</Badge>
+                      {selectedLecture.summary && (
+                        <div className="p-3 bg-muted/30 border border-border/40 rounded-lg">
+                          <p className="text-xs font-semibold mb-1 text-primary">Summary Concept</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{selectedLecture.summary}</p>
                         </div>
-                      </div>
+                      )}
+                      {selectedLecture.notes ? (
+                        <div className="prose prose-sm prose-invert max-w-none text-xs leading-relaxed space-y-2 whitespace-pre-wrap border-t border-border/30 pt-4">
+                          {selectedLecture.notes}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No notes compiled for this lecture log.</p>
+                      )}
                     </div>
-                  ))}
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-8">Select a lecture above to view revision notes.</p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="resources">
+            <TabsContent value="roadmap">
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold">Learning Resources</CardTitle>
-                  <CardDescription className="text-xs">Curated references for each topic</CardDescription>
+                  <CardTitle className="text-sm font-semibold">Goal Milestones</CardTitle>
+                  <CardDescription className="text-xs">Recommended path to achieve target</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {resources.map((res, i) => (
-                    <div key={i} className="p-3 rounded-lg border border-border/40 hover:border-primary/30 transition-colors">
-                      <div className="flex items-start justify-between mb-2">
-                        <p className="text-sm font-medium">{res.topic}</p>
-                        <Badge variant="outline" className="text-[9px]">{res.difficulty}</Badge>
+                  {selectedGoal ? (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-primary">{selectedGoal.title}</span>
+                        <Badge className="text-[10px]">{selectedGoal.progress}% complete</Badge>
                       </div>
-                      <div className="flex gap-2 text-[10px] mb-2">
-                        <a href={res.video} className="text-[var(--neuro-cyan)] hover:underline">Video</a>
-                        <span className="text-muted-foreground">·</span>
-                        <a href={res.article} className="text-[var(--neuro-cyan)] hover:underline">Article</a>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">{res.time}</span>
-                      </div>
+                      {selectedGoal.roadmapReport ? (
+                        <div className="p-4 rounded-lg bg-muted/20 border border-border/40 text-xs whitespace-pre-wrap leading-relaxed">
+                          {selectedGoal.roadmapReport}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground py-4 text-center">
+                          Generating milestones...
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  ) : (
+                    <div className="text-xs text-muted-foreground py-8 text-center">
+                      Select or create a learning goal above to inspect roadmap.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -413,6 +493,9 @@ export function RevisionCenter() {
                   </div>
                 );
               })}
+              {weakTopics.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-4">All topics secure.</p>
+              )}
             </CardContent>
           </Card>
 
@@ -422,39 +505,48 @@ export function RevisionCenter() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Calendar className="size-4 text-primary" /> Review Schedule
               </CardTitle>
-              <CardDescription className="text-xs">Next 7 days</CardDescription>
+              <CardDescription className="text-xs">For active flashcard decks</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 pt-0">
-              {[
-                { day: "Today", count: 12, urgent: true },
-                { day: "Tomorrow", count: 8, urgent: false },
-                { day: "May 24", count: 15, urgent: false },
-                { day: "May 25", count: 6, urgent: false },
-                { day: "May 26", count: 11, urgent: false },
-              ].map((s) => (
-                <div key={s.day} className={cn("flex items-center justify-between p-2 rounded-lg border", s.urgent ? "border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5" : "border-border/30 bg-muted/5")}>
-                  <div className="flex items-center gap-2">
-                    <Clock className="size-3 text-muted-foreground" />
-                    <span className="text-xs font-medium">{s.day}</span>
+              {flashcards.length > 0 ? (
+                [{ day: "Today", count: flashcards.length, urgent: true }].map((s, idx) => (
+                  <div key={idx} className={cn("flex items-center justify-between p-2 rounded-lg border", s.urgent ? "border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5" : "border-border/30 bg-muted/5")}>
+                    <div className="flex items-center gap-2">
+                      <Clock className="size-3 text-muted-foreground" />
+                      <span className="text-xs font-medium">{s.day}</span>
+                    </div>
+                    <Badge variant="outline" className={cn("text-[9px]", s.urgent && "border-[var(--neuro-rose)]/40 text-[var(--neuro-rose)]")}>
+                      {s.count} cards
+                    </Badge>
                   </div>
-                  <Badge variant="outline" className={cn("text-[9px]", s.urgent && "border-[var(--neuro-rose)]/40 text-[var(--neuro-rose)]")}>
-                    {s.count} cards
-                  </Badge>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground text-center py-4">No flashcards due — record a lecture to generate cards.</p>
+              )}
             </CardContent>
           </Card>
 
-          {/* Lyzr note */}
+          {/* Agent Recommendations */}
           <Card className="border-[var(--neuro-cyan)]/20">
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-start gap-3">
-                <Zap className="size-4 text-[var(--neuro-cyan)] shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-semibold text-[var(--neuro-cyan)]">Revision Planner Active</p>
-                  <p className="text-xs text-muted-foreground mt-1">Lyzr has optimized your schedule using forgetting curve + SM-2. Deadlock Prevention prioritized for immediate review.</p>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Zap className="size-4 text-[var(--neuro-cyan)]" /> Agent Recommendations
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0 text-xs">
+              {profile.recommendations && profile.recommendations.length > 0 ? (
+                profile.recommendations.map((rec, idx) => (
+                  <div key={idx} className="p-2 bg-muted/30 border border-border/30 rounded flex items-start gap-2 leading-relaxed">
+                    <CheckCircle className="size-3 text-[var(--neuro-cyan)] shrink-0 mt-0.5" />
+                    <span>{rec}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-start gap-2 p-2 bg-muted/30 border border-border/30 rounded">
+                  <CheckCircle className="size-3 text-[var(--neuro-cyan)] shrink-0 mt-0.5" />
+                  <span>Ask the Voice Companion to evaluate your progress to generate new insights.</span>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>

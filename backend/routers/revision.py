@@ -1,11 +1,14 @@
+import os
 import time
+from backend.services.agent_env import get_groq_credentials_for_backend
+import json
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from backend.database import get_db, DBFlashcard, DBUserProfile
-from backend.services import lyzr_service
+from openai import OpenAI
+from backend.database import get_db, DBFlashcard, DBUserProfile, DBLearningGoal
 
 router = APIRouter(prefix="/api/revision", tags=["revision"])
 
@@ -90,41 +93,90 @@ async def review_flashcard(card_id: str, req: ReviewRequest, db: Session = Depen
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/goals")
-async def get_learning_goals():
-    """Mock-returns available learning goals (normally loaded from SQLite)."""
-    return [
-        { "id": 1, "title": "Master DBMS in 30 days", "subjects": ["Normalization", "Transactions", "Indexing"], "progress": 62, "deadline": "2026-06-23" },
-        { "id": 2, "title": "OS Kernel Deep Dive", "subjects": ["Memory Management", "Scheduling"], "progress": 45, "deadline": "2026-07-15" }
-    ]
+async def get_learning_goals(db: Session = Depends(get_db)):
+    """Returns available learning goals from SQLite."""
+    try:
+        goals = db.query(DBLearningGoal).all()
+        return [
+            {
+                "id": g.id,
+                "title": g.title,
+                "subjects": g.topics,
+                "progress": g.progress,
+                "deadline": g.deadline,
+                "roadmapReport": g.roadmap_report
+            }
+            for g in goals
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/goals")
 async def create_learning_goal(req: GoalCreateRequest, db: Session = Depends(get_db)):
-    """Sets a study goal, calling Lyzr Planning Agent to draft milestones."""
+    """Sets a study goal, calling the LLM provider to draft milestones."""
     try:
         prompt = (
-            f"Goal: '{req.title}' covering topics: '{req.topics}' "
-            f"to complete in {req.timeline} days by date {req.targetDate}."
+            f"Generate a bullet-pointed educational milestone roadmap for a goal: '{req.title}' "
+            f"covering topics: '{req.topics}' to complete in {req.timeline} days by date {req.targetDate}.\n"
+            "Keep the response professional, concise, and structured."
         )
         
-        # Call Lyzr planner agent to create educational roadmap
-        roadmap_json = lyzr_service.learning_analytics_agent.execute(prompt)
+        roadmap_report = "Milestone 1: Topic familiarity\nMilestone 2: Practical exercises\nMilestone 3: Review and self-assessment."
+        
+        # Call Groq/OpenAI if API keys exist
+        groq_key, groq_model = get_groq_credentials_for_backend()
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        
+        try:
+            if groq_key:
+                client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+                response = client.chat.completions.create(
+                    model=groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
+                roadmap_report = response.choices[0].message.content.strip()
+            elif openai_key and "dummy" not in openai_key:
+                client = OpenAI(api_key=openai_key)
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
+                roadmap_report = response.choices[0].message.content.strip()
+        except Exception as api_err:
+            print(f"[RevisionRouter] API roadmap generation failed: {api_err}. Using generic fallback.")
+
+        # Create new Goal in Database
+        new_goal = DBLearningGoal(
+            id=int(time.time()),
+            title=req.title,
+            topics_json=json.dumps([t.strip() for t in req.topics.split(",")]),
+            progress=0,
+            deadline=req.targetDate,
+            roadmap_report=roadmap_report
+        )
+        db.add(new_goal)
         
         # Update user weekly goal progress as visual feedback
         profile = db.query(DBUserProfile).filter(DBUserProfile.id == "demo-user").first()
         if profile:
             profile.weekly_goal_progress = min(profile.weekly_goal_progress + 5, 100)
-            db.commit()
+            db.add(profile)
+            
+        db.commit()
             
         return {
             "success": True,
             "goal": {
-                "id": int(time.time()),
-                "title": req.title,
-                "subjects": [t.strip() for t in req.topics.split(",")],
-                "progress": 0,
-                "deadline": req.targetDate,
-                "roadmapReport": roadmap_json
+                "id": new_goal.id,
+                "title": new_goal.title,
+                "subjects": new_goal.topics,
+                "progress": new_goal.progress,
+                "deadline": new_goal.deadline,
+                "roadmapReport": new_goal.roadmap_report
             }
         }
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

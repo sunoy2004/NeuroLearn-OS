@@ -13,13 +13,15 @@ def get_qdrant_client() -> QdrantClient:
     """Lazily initializes and returns the Qdrant client to avoid multi-process lock errors."""
     global _qdrant_client
     if _qdrant_client is None:
-        if settings.QDRANT_URL:
-            try:
-                _qdrant_client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
-            except Exception as e:
-                print(f"Error connecting to Qdrant server at {settings.QDRANT_URL}: {e}. Falling back to local storage.")
-                _qdrant_client = QdrantClient(path="db_qdrant")
-        else:
+        url = (settings.QDRANT_URL or "http://localhost:6333").strip()
+        try:
+            if settings.QDRANT_API_KEY:
+                _qdrant_client = QdrantClient(url=url, api_key=settings.QDRANT_API_KEY)
+            else:
+                _qdrant_client = QdrantClient(url=url)
+            print(f"[Qdrant] Connected to {url}")
+        except Exception as e:
+            print(f"[Qdrant] Server at {url} unavailable ({e}). Using embedded local storage.")
             _qdrant_client = QdrantClient(path="db_qdrant")
     return _qdrant_client
 

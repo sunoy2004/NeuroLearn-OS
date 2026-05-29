@@ -23,13 +23,17 @@ class DBUserProfile(Base):
     __tablename__ = "user_profiles"
     
     id = Column(String, primary_key=True, index=True, default="demo-user")
-    name = Column(String, default="Alex Chen")
-    study_streak = Column(Integer, default=12)
-    total_hours = Column(Integer, default=47)
-    concepts_mastered = Column(Integer, default=38)
-    exam_readiness = Column(Integer, default=73)
-    weekly_goal_progress = Column(Integer, default=71)
+    name = Column(String, default="Learner")
+    study_streak = Column(Integer, default=0)
+    total_hours = Column(Integer, default=0)
+    concepts_mastered = Column(Integer, default=0)
+    concepts_detected = Column(Integer, default=0)
+    exam_readiness = Column(Integer, default=0)
+    weekly_goal_progress = Column(Integer, default=0)
     preferred_style = Column(String, default="Analogy-based")
+    recommendations_json = Column(Text, default="[]") # JSON list of strings
+    insights_json = Column(Text, default="[]") # JSON list of strings
+    learning_profile_json = Column(Text, default="{}")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class DBLecture(Base):
@@ -38,11 +42,37 @@ class DBLecture(Base):
     id = Column(String, primary_key=True, index=True)
     title = Column(String, nullable=False)
     subject = Column(String, nullable=False)
+    category = Column(String, nullable=True, default="General")
     duration = Column(Integer, default=0) # in minutes
     concept_count = Column(Integer, default=0)
     flashcard_count = Column(Integer, default=0)
     topics_json = Column(Text, default="[]") # stored as json list
+    keywords_json = Column(Text, default="[]") # extracted keywords
+    summary = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    language = Column(String, default="auto")
     date = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d"))
+
+    @property
+    def topics(self):
+        try:
+            return json.loads(self.topics_json)
+        except Exception:
+            return []
+
+    @topics.setter
+    def topics(self, value):
+        self.topics_json = json.dumps(value)
+
+class DBLearningGoal(Base):
+    __tablename__ = "learning_goals"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    topics_json = Column(Text, default="[]")
+    progress = Column(Integer, default=0)
+    deadline = Column(String, nullable=False)
+    roadmap_report = Column(Text, nullable=True)
 
     @property
     def topics(self):
@@ -64,6 +94,9 @@ class DBConcept(Base):
     mastery = Column(Float, default=50.0)
     retention = Column(Float, default=50.0)
     connections_json = Column(Text, default="[]") # JSON list of connected concept IDs
+    definition = Column(Text, nullable=True)
+    importance = Column(String, default="Medium")
+    related_concepts_json = Column(Text, default="[]")
     last_reviewed = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d"))
 
     @property
@@ -86,6 +119,8 @@ class DBQuizQuestion(Base):
     correct = Column(Integer, nullable=False) # index of correct option
     explanation = Column(Text, nullable=True)
     topic = Column(String, nullable=False)
+    difficulty = Column(String, default="Medium")
+    question_type = Column(String, default="MCQ")
 
     @property
     def options(self):
@@ -133,5 +168,50 @@ class DBMasteryPoint(Base):
     subject = Column(String, primary_key=True)
     mastery = Column(Float, nullable=False)
 
+class DBTranscriptChunk(Base):
+    __tablename__ = "transcript_chunks"
+
+    id = Column(String, primary_key=True, index=True)
+    lecture_id = Column(String, index=True, nullable=False)
+    text = Column(Text, nullable=False)
+    chunk_type = Column(String, default="speech")
+    timestamp = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class DBQuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+
+    id = Column(String, primary_key=True, index=True)
+    question_id = Column(String, nullable=False)
+    topic = Column(String, nullable=False)
+    selected_answer = Column(Integer, nullable=False)
+    correct = Column(Boolean, default=False)
+    score = Column(Float, default=0.0)
+    attempted_at = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Safe migration — add new columns without breaking existing databases
+    migrations = [
+        "ALTER TABLE lectures ADD COLUMN language VARCHAR DEFAULT 'auto'",
+        "ALTER TABLE lectures ADD COLUMN category VARCHAR DEFAULT 'General'",
+        "ALTER TABLE lectures ADD COLUMN keywords_json TEXT DEFAULT '[]'",
+        "ALTER TABLE user_profiles ADD COLUMN concepts_detected INTEGER DEFAULT 0",
+        "ALTER TABLE user_profiles ADD COLUMN learning_profile_json TEXT DEFAULT '{}'",
+        "ALTER TABLE concepts ADD COLUMN definition TEXT",
+        "ALTER TABLE concepts ADD COLUMN importance VARCHAR DEFAULT 'Medium'",
+        "ALTER TABLE concepts ADD COLUMN related_concepts_json TEXT DEFAULT '[]'",
+        "ALTER TABLE quiz_questions ADD COLUMN difficulty VARCHAR DEFAULT 'Medium'",
+        "ALTER TABLE quiz_questions ADD COLUMN question_type VARCHAR DEFAULT 'MCQ'",
+    ]
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            for sql in migrations:
+                try:
+                    conn.execute(text(sql))
+                except Exception:
+                    pass  # column already exists
+            conn.commit()
+    except Exception:
+        pass

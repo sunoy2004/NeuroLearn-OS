@@ -7,14 +7,6 @@ import { Network, Brain, Zap, Filter } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
 
-const nodePositions: Record<string, { x: number; y: number }> = {
-  c1: { x: 300, y: 120 }, c2: { x: 180, y: 200 }, c3: { x: 420, y: 200 },
-  c4: { x: 480, y: 100 }, c5: { x: 300, y: 320 }, c6: { x: 160, y: 380 },
-  c7: { x: 440, y: 320 }, c8: { x: 560, y: 220 }, c9: { x: 620, y: 340 },
-  c10: { x: 80, y: 260 }, c11: { x: 80, y: 160 }, c12: { x: 700, y: 200 },
-  c13: { x: 780, y: 120 }, c14: { x: 760, y: 300 },
-};
-
 function getMasteryColor(mastery: number) {
   if (mastery >= 80) return "var(--neuro-green)";
   if (mastery >= 65) return "var(--neuro-cyan)";
@@ -28,6 +20,17 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
   const { concepts } = useAppStore();
   const filtered = subjectFilter === "All" ? concepts : concepts.filter((c) => c.subject === subjectFilter);
   const visibleIds = new Set(filtered.map((c) => c.id));
+
+  function getNodePos(id: string) {
+    const idx = concepts.findIndex((c) => c.id === id);
+    if (idx === -1) return { x: 430, y: 230 };
+    const angle = (idx / Math.max(concepts.length, 1)) * 2 * Math.PI;
+    const radius = 160;
+    return {
+      x: Math.round(430 + Math.cos(angle) * radius),
+      y: Math.round(230 + Math.sin(angle) * radius),
+    };
+  }
 
   const edges: { from: string; to: string }[] = [];
   for (const c of filtered) {
@@ -51,8 +54,8 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
 
       {/* Edges */}
       {edges.map((edge, i) => {
-        const from = nodePositions[edge.from];
-        const to = nodePositions[edge.to];
+        const from = getNodePos(edge.from);
+        const to = getNodePos(edge.to);
         if (!from || !to) return null;
         return (
           <line key={i} x1={from.x} y1={from.y} x2={to.x} y2={to.y}
@@ -62,7 +65,7 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
 
       {/* Nodes */}
       {filtered.map((c) => {
-        const pos = nodePositions[c.id];
+        const pos = getNodePos(c.id);
         if (!pos) return null;
         const color = getMasteryColor(c.mastery);
         const isSelected = selectedId === c.id;
@@ -71,7 +74,7 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
           <g key={c.id} onClick={() => onSelect(c.id)} style={{ cursor: "pointer" }}>
             <circle cx={pos.x} cy={pos.y} r={r + 10} fill={`url(#grad-${c.id})`} />
             <circle cx={pos.x} cy={pos.y} r={r} fill="oklch(0.12 0.015 240)"
-              stroke={color} strokeWidth={isSelected ? 2.5 : 1.5}
+               stroke={color} strokeWidth={isSelected ? 2.5 : 1.5}
               filter={isSelected ? `drop-shadow(0 0 8px ${color})` : undefined} />
             <text x={pos.x} y={pos.y + 4} textAnchor="middle" fontSize={isSelected ? 8 : 7} fill={color} fontWeight={600}>
               {c.name.length > 10 ? c.name.slice(0, 9) + "…" : c.name}
@@ -88,14 +91,20 @@ function GraphVisualization({ selectedId, onSelect, subjectFilter }: {
 
 export function KnowledgeGraph() {
   const { concepts, fetchConceptGraph } = useAppStore();
-  const [selectedId, setSelectedId] = useState<string | null>("c1");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState("All");
 
   useEffect(() => {
     fetchConceptGraph();
   }, [fetchConceptGraph]);
 
-  const selected = concepts.find((c) => c.id === selectedId);
+  useEffect(() => {
+    if (concepts.length > 0 && (selectedId === null || !concepts.some(c => c.id === selectedId))) {
+      setSelectedId(concepts[0].id);
+    }
+  }, [concepts, selectedId]);
+
+  const selected = concepts.find((c) => c.id === selectedId) || concepts[0];
   const connectedConcepts = selected ? concepts.filter((c) => selected.connections.includes(c.id)) : [];
 
   return (

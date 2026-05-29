@@ -1,4 +1,4 @@
-export type Page = "dashboard" | "lecture-studio" | "tutor" | "knowledge-graph" | "revision" | "analytics" | "voice";
+export type Page = "dashboard" | "lecture-studio" | "tutor" | "knowledge-graph" | "revision" | "analytics" | "voice" | "settings";
 
 export interface Lecture {
   id: string;
@@ -9,6 +9,8 @@ export interface Lecture {
   flashcardCount: number;
   topics: string[];
   date: string;
+  summary?: string;
+  notes?: string;
 }
 
 export interface Concept {
@@ -56,6 +58,11 @@ export interface AgentStatus {
   status: "active" | "processing" | "complete" | "idle";
   task?: string;
   progress?: number;
+  provider?: string;
+  model?: string;
+  streaming?: boolean;
+  healthy?: boolean;
+  apiConfigured?: boolean;
 }
 
 export interface LearningProfile {
@@ -66,6 +73,8 @@ export interface LearningProfile {
   examReadiness: number;
   weeklyGoalProgress: number;
   preferredStyle: string;
+  recommendations?: string[];
+  insights?: string[];
 }
 
 export interface RetentionPoint {
@@ -99,6 +108,9 @@ export type VoiceIntent =
   | "WEAK_AREAS_QUERY"
   | "PROGRESS_QUERY"
   | "EXPLANATION_REQUEST"
+  | "GREETING"
+  | "EDUCATIONAL_QUESTION"
+  | "GENERAL_CONVERSATION"
   | "UNKNOWN";
 
 export interface VoiceCommand {

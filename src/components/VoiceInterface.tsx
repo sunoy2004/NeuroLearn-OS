@@ -2,45 +2,31 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Mic, MicOff, Bot, User, Zap, Activity, Brain, Cpu } from "lucide-react";
+import { Mic, MicOff, Bot, User, Zap, Activity, Brain, Cpu, MessageSquare } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { masterOrchestrator } from "@/services/agents/orchestrator";
-import { storeVoiceCommand, getCognitiveProfile } from "@/services/memory/qdrantClient";
-import { voiceSessionManager } from "@/services/voiceSessionManager";
-import type { VoiceCommand, VoiceIntent } from "@/types";
+import { useAgent } from "@/context/AgentContext";
+import { getCognitiveProfile } from "@/services/memory/qdrantClient";
 import { cn } from "@/lib/utils";
 import { VoiceWaveform } from "./VoiceWaveform";
-import { IntentBadge } from "./IntentBadge";
-
-interface VoiceMessage {
-  id: string;
-  type: "user" | "assistant" | "system";
-  content: string;
-  intent?: VoiceIntent;
-  agent?: string;
-  timestamp: number;
-  isProcessing?: boolean;
-}
 
 export function VoiceInterface() {
-  const [messages, setMessages] = useState<VoiceMessage[]>([]);
-  const [_isAssistantSpeaking, _setIsAssistantSpeaking] = useState(false);
-  const [currentIntent, setCurrentIntent] = useState<VoiceIntent | null>(null);
   const [cognitiveProfile, setCognitiveProfile] = useState<Record<string, unknown> | null>(null);
+  const [textInput, setTextInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const {
-    voiceListening: isListening,
-    voiceTranscript: transcript,
-    voiceProcessing: isProcessing,
-    lastVoiceCommand: lastCommand,
-    voiceError: error,
-    setVoiceListening,
-  } = useAppStore();
+    websocketStatus,
+    voiceStatus,
+    transcript,
+    aiResponseStream,
+    messages,
+    startListening,
+    stopListening,
+    sendTextMessage
+  } = useAgent();
 
-  const startListening = () => setVoiceListening(true);
-  const stopListening = () => setVoiceListening(false);
-  const simulatedMode = false;
+  const isListening = voiceStatus === "listening";
+  const isProcessing = voiceStatus === "processing";
 
   useEffect(() => {
     async function loadProfile() {
@@ -56,123 +42,37 @@ export function VoiceInterface() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, aiResponseStream]);
 
-  useEffect(() => {
-    if (lastCommand && lastCommand.intent !== "UNKNOWN") {
-      handleVoiceCommand(lastCommand);
-    } else if (lastCommand && lastCommand.intent === "UNKNOWN") {
-      addSystemMessage("I didn't understand that command. Could you rephrase it?");
-    }
-  }, [lastCommand]);
-
-  const addSystemMessage = (content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `sys-${Date.now()}`,
-        type: "system",
-        content,
-        timestamp: Date.now(),
-      },
-    ]);
+  const handleTextSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!textInput.trim()) return;
+    await sendTextMessage(textInput);
+    setTextInput("");
   };
 
-  const handleVoiceCommand = async (command: VoiceCommand) => {
-    setCurrentIntent(command.intent);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: command.id,
-        type: "user",
-        content: command.transcript,
-        intent: command.intent,
-        timestamp: command.timestamp,
-      },
-    ]);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `processing-${Date.now()}`,
-        type: "assistant",
-        content: `Processing your ${command.intent.replace("_", " ").toLowerCase()} request...`,
-        isProcessing: true,
-        timestamp: Date.now(),
-      },
-    ]);
-
-    try {
-      const response = await masterOrchestrator.routeCommand(command);
-
-      setMessages((prev) => prev.filter((m) => !m.isProcessing));
-
-      if (response.success) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `resp-${Date.now()}`,
-            type: "assistant",
-            content: response.message,
-            agent: command.intent.includes("QUIZ")
-              ? "Quiz Intelligence"
-              : command.intent.includes("LECTURE")
-              ? "Lecture Workflow"
-              : command.intent.includes("ANALYTICS")
-              ? "Analytics"
-              : "Adaptive Tutor",
-            timestamp: Date.now(),
-          },
-        ]);
-
-        await storeVoiceCommand(command, response.nextAction || command.intent, true);
-      } else {
-        addSystemMessage(response.message);
-      }
-    } catch (err) {
-      setMessages((prev) => prev.filter((m) => !m.isProcessing));
-      addSystemMessage(
-        `Error processing command: ${err instanceof Error ? err.message : "Unknown error"}`
-      );
-    }
-
-    setCurrentIntent(null);
-  };
-
-  const handleTextSubmit = async (text: string) => {
-    const command: VoiceCommand = {
-      id: `text-${Date.now()}`,
-      transcript: text,
-      intent: "TUTORING_REQUEST",
-      confidence: 1.0,
-      entities: {},
-      timestamp: Date.now(),
-    };
-
-    const { classifyIntent } = await import("@/services/voiceIntentClassifier");
-    const classification = classifyIntent(text);
-    command.intent = classification.intent;
-    command.entities = classification.entities;
-    command.confidence = classification.confidence;
-
-    handleVoiceCommand(command);
+  const handleQuickAction = async (text: string) => {
+    await sendTextMessage(text);
   };
 
   const quickActions = [
-    { label: "Start Quiz", text: "Take a quiz on DBMS", intent: "QUIZ_REQUEST" as VoiceIntent },
-    {
-      label: "Show Weak Areas",
-      text: "What are my weak topics?",
-      intent: "WEAK_AREAS_QUERY" as VoiceIntent,
-    },
-    {
-      label: "Start Recording",
-      text: "Start recording my lecture",
-      intent: "LECTURE_START" as VoiceIntent,
-    },
-    { label: "Check Progress", text: "Show my progress", intent: "ANALYTICS_QUERY" as VoiceIntent },
+    { label: "Start Quiz", text: "Take a quiz on DBMS" },
+    { label: "Show Weak Areas", text: "What are my weak topics?" },
+    { label: "Start Recording", text: "Start recording my lecture" },
+    { label: "Check Progress", text: "Show my progress" },
   ];
+
+  // Append temporary message if streaming is active
+  const displayedMessages = [...messages];
+  if (aiResponseStream) {
+    displayedMessages.push({
+      id: "streaming-bubble",
+      role: "assistant",
+      content: aiResponseStream,
+      timestamp: Date.now(),
+      isStreaming: true
+    } as any);
+  }
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -186,13 +86,7 @@ export function VoiceInterface() {
               <h2 className="text-lg font-semibold">Voice-Controlled Learning</h2>
               <p className="text-xs text-muted-foreground flex items-center gap-2">
                 <Activity className="size-3" />
-                {simulatedMode ? "Simulated mode (text input)" : "Voice capture active"}
-                {currentIntent && (
-                  <>
-                    <span className="text-muted-foreground/30">|</span>
-                    <IntentBadge intent={currentIntent} />
-                  </>
-                )}
+                Connection: <span className="font-mono text-foreground capitalize">{websocketStatus}</span>
               </p>
             </div>
           </div>
@@ -217,7 +111,7 @@ export function VoiceInterface() {
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-            {messages.length === 0 ? (
+            {displayedMessages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
                 <Brain className="size-16 text-primary/30" />
                 <div>
@@ -233,7 +127,7 @@ export function VoiceInterface() {
                       key={action.label}
                       variant="outline"
                       size="sm"
-                      onClick={() => handleTextSubmit(action.text)}
+                      onClick={() => handleQuickAction(action.text)}
                       className="text-xs"
                     >
                       {action.label}
@@ -242,16 +136,17 @@ export function VoiceInterface() {
                 </div>
               </div>
             ) : (
-              messages.map((message) => (
+              displayedMessages.map((message) => (
                 <MessageBubble key={message.id} message={message} />
               ))
             )}
           </div>
 
+          {/* Form and Controls */}
           <div className="border-t border-border/50 p-4 bg-background/80 backdrop-blur-sm space-y-3">
             <VoiceWaveform isListening={isListening} />
 
-            <div className="flex items-center gap-2">
+            <div className="flex gap-2">
               <Button
                 onClick={isListening ? stopListening : startListening}
                 className={cn(
@@ -276,20 +171,31 @@ export function VoiceInterface() {
               </Button>
             </div>
 
+            <form onSubmit={handleTextSubmit} className="flex gap-2">
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="Type your question or action command here..."
+                className="flex-1 h-10 px-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <Button type="submit" size="sm" className="h-10">Send</Button>
+            </form>
+
             {transcript && (
-              <div className="text-xs text-muted-foreground text-center">
-                Hearing: "{transcript}"
+              <div className="text-xs text-muted-foreground text-center flex items-center justify-center gap-1">
+                <MessageSquare className="size-3 text-primary animate-pulse" />
+                Hearing: &quot;{transcript}&quot;
               </div>
             )}
 
-            {error && <div className="text-xs text-red-500 text-center">{error}</div>}
-
             <div className="text-xs text-muted-foreground text-center">
-              Try: "Take a quiz on DBMS" • "Explain deadlocks" • "Show my weak topics"
+              Try: &quot;Take a quiz on DBMS&quot; • &quot;Explain deadlocks&quot; • &quot;Show my weak topics&quot;
             </div>
           </div>
         </div>
 
+        {/* Cognitive Profile Sidebar */}
         <div className="w-80 border-l border-border/50 bg-sidebar hidden lg:block overflow-y-auto">
           <div className="p-4 space-y-4">
             <Card>
@@ -336,40 +242,6 @@ export function VoiceInterface() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm">Recent Commands</CardTitle>
-                <CardDescription className="text-xs">Voice interaction history</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {voiceSessionManager
-                  .getCommandHistory(5)
-                  .reverse()
-                  .map((cmd) => (
-                    <div
-                      key={cmd.id}
-                      className="p-2 rounded bg-muted/30 text-xs space-y-1 border border-border/30"
-                    >
-                      <div className="flex items-center justify-between">
-                        <IntentBadge intent={cmd.intent} />
-                        <span className="text-muted-foreground text-[10px]">
-                          {Math.round(cmd.confidence * 100)}%
-                        </span>
-                      </div>
-                      <p className="truncate text-muted-foreground">
-                        &quot;{cmd.transcript.slice(0, 40)}
-                        {cmd.transcript.length > 40 ? "..." : ""}&quot;
-                      </p>
-                    </div>
-                  ))}
-                {voiceSessionManager.getCommandHistory().length === 0 && (
-                  <p className="text-xs text-muted-foreground text-center py-2">
-                    No commands yet
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
                 <CardTitle className="text-sm">Quick Actions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -379,7 +251,7 @@ export function VoiceInterface() {
                     variant="outline"
                     size="sm"
                     className="w-full text-xs justify-start"
-                    onClick={() => handleTextSubmit(action.text)}
+                    onClick={() => handleQuickAction(action.text)}
                   >
                     <Zap className="size-3 mr-2" />
                     {action.label}
@@ -394,8 +266,8 @@ export function VoiceInterface() {
   );
 }
 
-function MessageBubble({ message }: { message: VoiceMessage }) {
-  const isUser = message.type === "user";
+function MessageBubble({ message }: { message: any }) {
+  const isUser = message.role === "user";
 
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -414,8 +286,8 @@ function MessageBubble({ message }: { message: VoiceMessage }) {
 
       <div className={cn("flex-1", isUser ? "flex flex-col items-end" : "flex flex-col items-start")}>
         {message.intent && (
-          <div className="mb-1">
-            <IntentBadge intent={message.intent} />
+          <div className="mb-1 bg-muted px-1.5 py-0.5 rounded text-[10px] font-semibold text-muted-foreground uppercase">
+            {message.intent.replace("_", " ")}
           </div>
         )}
 
@@ -425,15 +297,15 @@ function MessageBubble({ message }: { message: VoiceMessage }) {
             isUser
               ? "bg-primary/15 border border-primary/20"
               : "bg-card border border-border/50",
-            message.isProcessing && "animate-pulse"
+            message.isStreaming && "animate-pulse border-[var(--neuro-cyan)]/30 bg-[var(--neuro-cyan)]/5"
           )}
         >
-          {message.isProcessing && <Cpu className="size-3 inline-block mr-2 animate-spin" />}
+          {message.isStreaming && <Cpu className="size-3 inline-block mr-2 animate-spin text-[var(--neuro-cyan)]" />}
           {message.content}
         </div>
 
-        {message.agent && (
-          <span className="text-[10px] text-muted-foreground mt-1 px-1">{message.agent}</span>
+        {message.agentName && (
+          <span className="text-[10px] text-muted-foreground mt-1 px-1">{message.agentName}</span>
         )}
 
         <span className="text-[10px] text-muted-foreground/50 mt-0.5 px-1">

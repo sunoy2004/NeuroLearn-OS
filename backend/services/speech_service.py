@@ -10,8 +10,15 @@ def generate_placeholder_audio() -> bytes:
     return header + data
 
 async def transcribe_audio(audio_bytes: bytes) -> str:
-    """Sends audio buffer to Deepgram for transcription, falling back to OpenAI Whisper."""
-    # 1. Try Deepgram
+    """Omi-compatible STT (Deepgram) with OpenAI Whisper fallback."""
+    from backend.services.omi_service import transcribe_audio_omi, is_omi_configured
+
+    if is_omi_configured():
+        transcript = await transcribe_audio_omi(audio_bytes)
+        if transcript:
+            return transcript
+
+    # Legacy Deepgram key path
     if settings.DEEPGRAM_API_KEY and "dummy" not in settings.DEEPGRAM_API_KEY:
         try:
             async with httpx.AsyncClient() as client:

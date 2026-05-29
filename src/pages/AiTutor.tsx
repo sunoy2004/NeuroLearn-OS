@@ -3,19 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import { Brain, Send, Mic, Sparkles, Zap, History, BookOpen, Lightbulb, ChevronRight, Bot, User, Circle, Cpu, Menu } from "lucide-react";
+import { Brain, Send, Mic, Sparkles, Zap, History, BookOpen, Lightbulb, Bot, User, Circle, Cpu, Menu } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { ChatMessage } from "@/types";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/services/api";
-
-const suggestedPrompts = [
-  "Explain serializability like you explained B+ trees.",
-  "Why does BCNF sometimes lose lossless joins?",
-  "Connect deadlock prevention to OS resource allocation.",
-  "Generate a quiz on Transaction Management.",
-  "What should I revise before my DBMS exam?",
-];
 
 const agentThoughts = [
   "Retrieving semantic memory from Qdrant...",
@@ -64,8 +56,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 function ContextPanel() {
-  const { agents, concepts } = useAppStore();
+  const { agents, concepts, weakTopics, profile } = useAppStore();
   const activeAgent = agents.find((a) => a.status === "active" && a.name === "Adaptive Tutor");
+  const topConcepts = [...concepts].sort((a, b) => b.retention - a.retention).slice(0, 5);
+  const insights = profile.insights ?? [];
 
   return (
     <div className="w-full space-y-4 overflow-y-auto">
@@ -74,13 +68,17 @@ function ContextPanel() {
           <History className="size-3" /> Memory Context
         </p>
         <div className="space-y-2">
-          {["B+ Tree indexing (high relevance)", "Transaction ACID properties", "BCNF normalization", "Query optimization"].map((ctx, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-              <div className="size-1.5 rounded-full bg-[var(--neuro-cyan)]/60 shrink-0" />
-              <span className="truncate">{ctx}</span>
-              <span className="text-[9px] text-muted-foreground/40 shrink-0">{95 - i * 8}%</span>
-            </div>
-          ))}
+          {topConcepts.length > 0 ? (
+            topConcepts.map((c) => (
+              <div key={c.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="size-1.5 rounded-full bg-[var(--neuro-cyan)]/60 shrink-0" />
+                <span className="truncate">{c.name}</span>
+                <span className="text-[9px] text-muted-foreground/40 shrink-0">{Math.round(c.retention)}%</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-muted-foreground">No concepts indexed yet. Record a lecture to build context.</p>
+          )}
         </div>
       </div>
 
@@ -89,17 +87,21 @@ function ContextPanel() {
           <BookOpen className="size-3" /> Related Concepts
         </p>
         <div className="space-y-2">
-          {concepts.filter((c) => c.subject === "DBMS").slice(0, 5).map((concept) => (
-            <div key={concept.id} className="flex items-center justify-between">
-              <span className="text-xs text-foreground/80 truncate">{concept.name}</span>
-              <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                <div className="w-12 h-1 bg-border rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full" style={{ width: `${concept.mastery}%` }} />
+          {concepts.length > 0 ? (
+            concepts.slice(0, 5).map((concept) => (
+              <div key={concept.id} className="flex items-center justify-between">
+                <span className="text-xs text-foreground/80 truncate">{concept.name}</span>
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  <div className="w-12 h-1 bg-border rounded-full overflow-hidden">
+                    <div className="h-full bg-primary rounded-full" style={{ width: `${concept.mastery}%` }} />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground w-6 text-right">{Math.round(concept.mastery)}%</span>
                 </div>
-                <span className="text-[10px] text-muted-foreground w-6 text-right">{concept.mastery}%</span>
               </div>
-            </div>
-          ))}
+            ))
+          ) : (
+            <p className="text-xs text-muted-foreground">Concepts appear here after lecture processing.</p>
+          )}
         </div>
       </div>
 
@@ -108,21 +110,27 @@ function ContextPanel() {
           <Lightbulb className="size-3" /> Tutor Insights
         </p>
         <div className="space-y-3">
-          <div className="rounded-lg border border-[var(--neuro-amber)]/20 bg-[var(--neuro-amber)]/5 p-3">
-            <p className="text-[10px] text-[var(--neuro-amber)] font-semibold uppercase tracking-widest mb-1">Adaptation Active</p>
-            <p className="text-xs text-muted-foreground">Analogy-based learning detected. Using filing cabinet metaphors for database concepts.</p>
-          </div>
-          <div className="rounded-lg border border-[var(--neuro-cyan)]/20 bg-[var(--neuro-cyan)]/5 p-3">
-            <p className="text-[10px] text-primary font-semibold uppercase tracking-widest mb-1">Cross-Topic Link</p>
-            <p className="text-xs text-muted-foreground">Serializability → Concurrency → OS Scheduling. Connect DBMS + OS concepts.</p>
-          </div>
-          <div className="rounded-lg border border-[var(--neuro-rose)]/20 bg-[var(--neuro-rose)]/5 p-3">
-            <p className="text-[10px] text-[var(--neuro-rose)] font-semibold uppercase tracking-widest mb-1">Weak Area</p>
-            <p className="text-xs text-muted-foreground">Deadlock prevention (35% mastery). Recommend targeted session.</p>
-            <button className="text-[10px] text-[var(--neuro-rose)] mt-1 flex items-center gap-1 hover:underline">
-              Start remediation <ChevronRight className="size-2.5" />
-            </button>
-          </div>
+          {profile.preferredStyle && (
+            <div className="rounded-lg border border-[var(--neuro-amber)]/20 bg-[var(--neuro-amber)]/5 p-3">
+              <p className="text-[10px] text-[var(--neuro-amber)] font-semibold uppercase tracking-widest mb-1">Learning Style</p>
+              <p className="text-xs text-muted-foreground">{profile.preferredStyle}</p>
+            </div>
+          )}
+          {insights.slice(0, 2).map((text, i) => (
+            <div key={i} className="rounded-lg border border-[var(--neuro-cyan)]/20 bg-[var(--neuro-cyan)]/5 p-3">
+              <p className="text-[10px] text-primary font-semibold uppercase tracking-widest mb-1">Insight</p>
+              <p className="text-xs text-muted-foreground">{text}</p>
+            </div>
+          ))}
+          {weakTopics.slice(0, 1).map((topic) => (
+            <div key={topic.name} className="rounded-lg border border-[var(--neuro-rose)]/20 bg-[var(--neuro-rose)]/5 p-3">
+              <p className="text-[10px] text-[var(--neuro-rose)] font-semibold uppercase tracking-widest mb-1">Weak Area</p>
+              <p className="text-xs text-muted-foreground">{topic.name} ({topic.score}% mastery). Forget in {topic.daysUntilForgetting}d.</p>
+            </div>
+          ))}
+          {insights.length === 0 && weakTopics.length === 0 && !profile.preferredStyle && (
+            <p className="text-xs text-muted-foreground">Insights appear after you record lectures and review flashcards.</p>
+          )}
         </div>
       </div>
 
@@ -138,17 +146,42 @@ function ContextPanel() {
   );
 }
 
+function buildSuggestedPrompts(concepts: { name: string; subject: string }[], weakTopics: { name: string }[], lectures: { title: string }[]): string[] {
+  const prompts: string[] = [];
+  if (concepts.length > 0) {
+    prompts.push(`Explain ${concepts[0].name} in simple terms.`);
+  }
+  if (weakTopics.length > 0) {
+    prompts.push(`Help me revise ${weakTopics[0].name}.`);
+  }
+  if (lectures.length > 0) {
+    prompts.push(`Summarize key points from "${lectures[0].title}".`);
+  }
+  if (concepts.length > 1) {
+    prompts.push(`Generate a quiz on ${concepts[1].name}.`);
+  }
+  if (prompts.length === 0) {
+    prompts.push("What should I study first?");
+  }
+  return prompts.slice(0, 5);
+}
+
 export function AiTutor() {
-  const { chatMessages, addMessage, fetchConceptGraph } = useAppStore();
+  const { chatMessages, addMessage, fetchConceptGraph, fetchDashboardData, concepts, weakTopics, lectures } = useAppStore();
+  const suggestedPrompts = buildSuggestedPrompts(concepts, weakTopics, lectures);
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingStep, setThinkingStep] = useState(0);
   const [showContextDrawer, setShowContextDrawer] = useState(false);
+  const [tutorHealth, setTutorHealth] = useState<{ healthy: boolean; provider: string; model: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchConceptGraph();
-  }, [fetchConceptGraph]);
+    fetchDashboardData();
+    // Check tutor health on mount
+    apiRequest<any>("/api/tutor/health").then(h => setTutorHealth(h)).catch(() => setTutorHealth({ healthy: false, provider: "offline", model: "unavailable" }));
+  }, [fetchConceptGraph, fetchDashboardData]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -188,16 +221,22 @@ export function AiTutor() {
         agent: res.agent
       };
       addMessage(reply);
-    } catch (e) {
-      console.warn("Backend chat failed, playing client mock explanation.");
-      await new Promise((r) => setTimeout(r, 1200));
+    } catch (e: any) {
+      console.warn("Backend chat failed.", e);
       clearInterval(interval);
       setIsThinking(false);
       setThinkingStep(0);
 
+      // Try to parse structured error from backend
+      let errorMsg = "The tutor service is unavailable right now. Make sure the backend is running, then try again.";
+      try {
+        const parsed = JSON.parse(e?.message || "");
+        if (parsed?.detail) errorMsg = `Tutor error: ${parsed.detail}`;
+      } catch { /* keep default */ }
+
       const reply: ChatMessage = {
         id: `a-${Date.now()}`, role: "assistant",
-        content: "I've retrieved relevant context from your Qdrant memory store and cross-referenced with your learning profile.\n\nBased on your interaction history (analogy-based learning style), here's a tailored explanation:\n\nThink of it like a filing cabinet — each drawer is a transaction, and you can't open the same drawer simultaneously from two filing clerks. That's the essence of isolation in ACID properties...",
+        content: errorMsg,
         timestamp: new Date().toISOString(),
         agent: "Adaptive Tutor",
       };
@@ -217,12 +256,12 @@ export function AiTutor() {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold truncate">Adaptive Tutor</p>
-              <p className="text-xs text-muted-foreground truncate">Lyzr orchestrator · Qdrant memory · 47 interactions</p>
+              <p className="text-xs text-muted-foreground truncate">Agent network · Semantic memory · {chatMessages.length} messages</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Badge variant="outline" className="text-[10px] text-[var(--neuro-green)] border-[var(--neuro-green)]/30 gap-1 hidden sm:flex">
-              <Circle className="size-1.5 fill-current" /> Online
+            <Badge variant="outline" className={cn("text-[10px] gap-1 hidden sm:flex", tutorHealth?.healthy ? "text-[var(--neuro-green)] border-[var(--neuro-green)]/30" : "text-[var(--neuro-rose)] border-[var(--neuro-rose)]/30")}>
+              <Circle className="size-1.5 fill-current" /> {tutorHealth?.healthy ? `Online · ${tutorHealth.provider}` : "Connecting..."}
             </Badge>
             <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setShowContextDrawer(true)}>
               <Menu className="size-4" />
@@ -266,16 +305,18 @@ export function AiTutor() {
         </div>
 
         {/* Suggested Prompts */}
-        <div className="px-4 lg:px-6 py-2 shrink-0 border-t border-border/30">
-          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-            {suggestedPrompts.map((prompt) => (
-              <button key={prompt} onClick={() => sendMessage(prompt)}
-                className="text-xs text-muted-foreground bg-muted/30 hover:bg-muted/50 border border-border/40 hover:border-primary/30 hover:text-foreground rounded-full px-3 py-1.5 whitespace-nowrap transition-all shrink-0">
-                {prompt}
-              </button>
-            ))}
+        {suggestedPrompts.length > 0 && (
+          <div className="px-4 lg:px-6 py-2 shrink-0 border-t border-border/30">
+            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+              {suggestedPrompts.map((prompt) => (
+                <button key={prompt} onClick={() => sendMessage(prompt)}
+                  className="text-xs text-muted-foreground bg-muted/30 hover:bg-muted/50 border border-border/40 hover:border-primary/30 hover:text-foreground rounded-full px-3 py-1.5 whitespace-nowrap transition-all shrink-0">
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Input Area */}
         <div className="border-t border-border/50 px-4 lg:px-6 py-3 shrink-0 bg-background/60 backdrop-blur-sm">
@@ -283,7 +324,7 @@ export function AiTutor() {
             <div className="flex-1 relative">
               <Input value={input} onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage(input))}
-                placeholder="Ask anything... context-aware tutoring powered by Lyzr + Qdrant"
+                placeholder="Ask anything... context-aware tutoring powered by AI agents"
                 className="pr-10 bg-card border-border/60 focus-visible:border-primary/50 text-sm" disabled={isThinking} />
               <button className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors">
                 <Mic className="size-4" />

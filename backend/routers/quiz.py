@@ -122,6 +122,46 @@ async def evaluate_quiz_answer(req: AnswerEvaluateRequest, db: Session = Depends
                 else:
                     wt.score = max(wt.score - 5.0, 10.0)
                     wt.days_until_forgetting = 1
+
+            # Update rich learning profile JSON
+            try:
+                lprof = json.loads(profile.learning_profile_json or "{}")
+            except Exception:
+                lprof = {}
+
+            if "weak_topics" not in lprof: lprof["weak_topics"] = []
+            if "strong_topics" not in lprof: lprof["strong_topics"] = []
+            if "quiz_scores" not in lprof: lprof["quiz_scores"] = []
+            if "revision_history" not in lprof: lprof["revision_history"] = []
+
+            lprof["quiz_scores"].append({
+                "question_id": req.questionId,
+                "topic": question.topic,
+                "accuracy": accuracy,
+                "confidence": confidence_score,
+                "timestamp": time.time()
+            })
+
+            # Update weak/strong lists based on quiz accuracy
+            if accuracy < 0.6:
+                if question.topic not in lprof["weak_topics"]:
+                    lprof["weak_topics"].append(question.topic)
+                if question.topic in lprof["strong_topics"]:
+                    try:
+                        lprof["strong_topics"].remove(question.topic)
+                    except ValueError:
+                        pass
+            elif accuracy >= 0.8:
+                if question.topic not in lprof["strong_topics"]:
+                    lprof["strong_topics"].append(question.topic)
+                if question.topic in lprof["weak_topics"]:
+                    try:
+                        lprof["weak_topics"].remove(question.topic)
+                    except ValueError:
+                        pass
+
+            profile.learning_profile_json = json.dumps(lprof)
+            db.add(profile)
             db.commit()
             
         return {

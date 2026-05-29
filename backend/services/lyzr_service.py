@@ -1,189 +1,102 @@
-import json
-from typing import Dict, Any, List, Optional
-from openai import OpenAI
-from backend.config import settings
-from backend.services import qdrant_service
+"""
+Lyzr multi-agent orchestration — each specialist is a Lyzr Studio agent.
+Routes voice commands through intent classification → Qdrant memory → specialist agents.
+"""
 
-class LyzrAgent:
-    def __init__(self, name: str, system_prompt: str):
+import json
+import time
+from typing import Any, Dict, Optional
+
+from backend.services import qdrant_service
+from backend.services.lyzr_client import (
+    get_agent_lyzr_credentials,
+    is_lyzr_configured,
+    lyzr_agent_execute,
+)
+from backend.database import SessionLocal, DBUserProfile
+
+# ─── Agent system prompts (mirror Lyzr Studio agent instructions) ───
+
+INTENT_PROMPT = """You are the Voice Intent Classifier for NeuroLearn OS.
+Respond ONLY with raw JSON (no markdown): {"intent": "...", "confidence": 0.0-1.0, "entities": {}}
+Allowed intents: LECTURE_START, LECTURE_STOP, QUIZ_REQUEST, TUTORING_REQUEST, REVISION_START,
+ANALYTICS_QUERY, FLASHCARD_CREATE, ROADMAP_CREATE, GOAL_SET, WEAK_AREAS_QUERY, PROGRESS_QUERY,
+EXPLANATION_REQUEST, NAVIGATE_DASHBOARD, NAVIGATE_TUTOR, NAVIGATE_LECTURE, NAVIGATE_REVISION,
+NAVIGATE_ANALYTICS, NAVIGATE_GRAPH, UNKNOWN
+Navigation: "open revision" → NAVIGATE_REVISION, "open knowledge graph" → NAVIGATE_GRAPH, etc.
+Multilingual input is supported — JSON keys stay English."""
+
+LECTURE_PROMPT = """You are the Lecture Processing Agent. Handle lecture start/stop actions and
+summarize lecture content into topics and flashcard suggestions."""
+
+TUTOR_PROMPT = """You are the Adaptive Tutor Agent for NeuroLearn OS. Explain academic concepts using
+analogies and clear definitions. Adapt to the student's learning style from context memory."""
+
+QUIZ_PROMPT = """You are the Quiz Intelligence Agent. Generate adaptive multiple-choice questions as JSON
+array with keys: id, question, options, correct (index), explanation, topic. Or evaluate answers."""
+
+REVISION_PROMPT = """You are the Revision Planning Agent. Optimize spaced repetition schedules and
+recommend due topics as JSON: {"due_today": [...], "recommendation": "..."}."""
+
+GRAPH_PROMPT = """You are the Knowledge Graph Agent. Return concept relationships as JSON:
+{"nodes": [...], "dependencies": [{"from": "...", "to": "..."}]}."""
+
+ANALYTICS_PROMPT = """You are the Learning Analytics Agent. Return JSON with examReadiness, strengths,
+weaknesses based on student context."""
+
+
+class LyzrStudioAgent:
+    """Thin wrapper around a Lyzr Studio agent ID."""
+
+    def __init__(self, name: str, env_prefix: str, system_prompt: str):
         self.name = name
+        self.env_prefix = env_prefix
         self.system_prompt = system_prompt
-        self.openai_client = None
-        if settings.OPENAI_API_KEY and "dummy" not in settings.OPENAI_API_KEY:
-            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    @property
+    def configured(self) -> bool:
+        key, aid = get_agent_lyzr_credentials(self.env_prefix)
+        return is_lyzr_configured(key, aid)
+
+    def is_healthy(self) -> bool:
+        """Check if this agent can reach the Lyzr API."""
+        if not self.configured:
+            return False
+        try:
+            result = self.execute("ping", None)
+            return result is not None and "error" not in result.lower()[:50]
+        except Exception:
+            return False
 
     def execute(self, user_prompt: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """Runs the agent prompt against OpenAI or returns a fallback response."""
-        if not self.openai_client:
-            return self.get_mock_fallback(user_prompt, context)
-            
+        if not self.configured:
+            return json.dumps({
+                "error": f"{self.name} not configured",
+                "hint": f"Set {self.env_prefix}_AGENT_LYZR_ID in .env",
+            })
         try:
-            messages = [
-                {"role": "system", "content": self.system_prompt}
-            ]
-            if context:
-                messages.append({
-                    "role": "system", 
-                    "content": f"Student Profile & Memory Context: {json.dumps(context)}"
-                })
-            messages.append({"role": "user", "content": user_prompt})
-            
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                temperature=0.3
+            return lyzr_agent_execute(
+                self.env_prefix, self.name, self.system_prompt, user_prompt, context
             )
-            return response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"Error executing agent {self.name}: {e}")
-            return self.get_mock_fallback(user_prompt, context)
+            print(f"[LyzrService] {self.name} failed: {e}")
+            return json.dumps({"error": str(e)})
 
-    def get_mock_fallback(self, prompt: str, context: Optional[Dict[str, Any]]) -> str:
-        """Provides high-fidelity simulated responses for offline mode."""
-        p_lower = prompt.lower()
-        if "voice intent" in self.name.lower():
-            # Return JSON intent classification
-            if "quiz" in p_lower:
-                return json.dumps({"intent": "QUIZ_REQUEST", "confidence": 0.95, "entities": {"topic": "Operating Systems"}})
-            elif "explain" in p_lower or "what is" in p_lower:
-                topic = "B+ Trees" if "tree" in p_lower else "Normalization"
-                return json.dumps({"intent": "TUTORING_REQUEST", "confidence": 0.92, "entities": {"topic": topic}})
-            elif "start recording" in p_lower or "record" in p_lower:
-                return json.dumps({"intent": "LECTURE_START", "confidence": 0.96, "entities": {"subject": "DBMS"}})
-            elif "stop" in p_lower or "end" in p_lower:
-                return json.dumps({"intent": "LECTURE_STOP", "confidence": 0.94, "entities": {}})
-            elif "weak" in p_lower or "struggle" in p_lower:
-                return json.dumps({"intent": "WEAK_AREAS_QUERY", "confidence": 0.91, "entities": {}})
-            elif "progress" in p_lower:
-                return json.dumps({"intent": "PROGRESS_QUERY", "confidence": 0.93, "entities": {}})
-            else:
-                return json.dumps({"intent": "TUTORING_REQUEST", "confidence": 0.85, "entities": {"topic": prompt}})
-                
-        elif "tutor" in self.name.lower():
-            if "tree" in p_lower:
-                return (
-                    "Think of B+ Trees like a library catalog index card filing system. "
-                    "Instead of checking every book page (sequential scan), you look at the catalog tab 'History' -> 'Rome' -> 'Page 4'. "
-                    "All actual books (data records) are stored at the bottom shelf (leaf nodes), while pointers at higher levels speed up navigation. "
-                    "This guarantees O(log N) query time, making indexing extremely fast!"
-                )
-            elif "bcnf" in p_lower or "normalization" in p_lower:
-                return (
-                    "BCNF (Boyce-Codd Normal Form) is like a strict rule for roommates in a house. "
-                    "It says: every decision maker (determinant) must be a master owner (superkey). "
-                    "If roommate A determines Room B's chores, roommate A MUST own the house contract. "
-                    "This prevents overlap anomalies where sub-agreements cause updates to conflict."
-                )
-            return f"Here is a tailored explanation for {prompt}. It uses analogies of filing cabinets to help connect new concepts with database normalization."
-            
-        elif "quiz" in self.name.lower():
-            # Return list of quiz questions
-            return json.dumps([
-                {
-                    "id": "q_dbms_1",
-                    "question": "A relation R(A,B,C,D) has FDs: AB->C, C->D, D->A. What is the highest normal form of R?",
-                    "options": ["1NF", "2NF", "3NF", "BCNF"],
-                    "correct": 2,
-                    "explanation": "Since D->A holds and D is not a superkey, BCNF is violated. However, no transitives exist on the primary key, so 3NF holds.",
-                    "topic": "Normalization"
-                },
-                {
-                    "id": "q_dbms_2",
-                    "question": "In a B+ Tree index, where are the actual data pointers or record rows stored?",
-                    "options": ["Root node only", "Internal nodes only", "Leaf nodes only", "All nodes evenly"],
-                    "correct": 2,
-                    "explanation": "Unlike B-Trees, B+ Trees store all actual record references or data rows exclusively in the leaf nodes.",
-                    "topic": "Indexing"
-                }
-            ])
-            
-        elif "revision" in self.name.lower():
-            return json.dumps({
-                "due_today": ["Deadlock Prevention", "TLB Page Replacement"],
-                "recommendation": "Prioritize Deadlock Prevention. Your memory retention is currently at 35% for this topic."
-            })
-            
-        elif "graph" in self.name.lower():
-            return json.dumps({
-                "nodes": ["3NF", "BCNF", "Functional Dependencies", "ACID", "Serializability"],
-                "dependencies": [
-                    {"from": "Functional Dependencies", "to": "3NF"},
-                    {"from": "3NF", "to": "BCNF"}
-                ]
-            })
-            
-        elif "analytics" in self.name.lower():
-            return json.dumps({
-                "examReadiness": 75,
-                "strengths": ["ACID Properties", "SQL indexing"],
-                "weaknesses": ["Deadlocks", "BCNF Normalization"]
-            })
-            
-        return f"Response from {self.name} agent regarding: {prompt}"
 
-# Instantiate agents
-voice_intent_agent = LyzrAgent(
-    name="Voice Intent Agent",
-    system_prompt=(
-        "You are the Voice Intent Agent. Classify user transcripts into JSON formats with keys: "
-        "'intent' (one of: LECTURE_START, LECTURE_STOP, QUIZ_REQUEST, TUTORING_REQUEST, "
-        "REVISION_START, ANALYTICS_QUERY, FLASHCARD_CREATE, ROADMAP_CREATE, GOAL_SET, "
-        "WEAK_AREAS_QUERY, PROGRESS_QUERY, EXPLANATION_REQUEST, UNKNOWN), "
-        "'confidence' (float 0.0 to 1.0), and 'entities' (dict of extracted parameters like topic, subject, goal)."
-    )
-)
+# ─── Multi-agent registry (Lyzr Studio — one agent per role) ───
 
-lecture_processing_agent = LyzrAgent(
-    name="Lecture Processing Agent",
-    system_prompt=(
-        "You are the Lecture Processing Agent. Take raw transcribed lecture audio text. "
-        "Segment the content into semantic blocks, extract main topics, summarize each section, "
-        "and suggest flashcards (front/back questions)."
-    )
-)
+voice_intent_agent = LyzrStudioAgent("Voice Intent Agent", "ORCHESTRATOR", INTENT_PROMPT)
+lecture_processing_agent = LyzrStudioAgent("Lecture Processing Agent", "LECTURE", LECTURE_PROMPT)
+adaptive_tutor_agent = LyzrStudioAgent("Adaptive Tutor Agent", "TUTOR", TUTOR_PROMPT)
+quiz_intelligence_agent = LyzrStudioAgent("Quiz Intelligence Agent", "QUIZ", QUIZ_PROMPT)
+revision_planning_agent = LyzrStudioAgent("Revision Planning Agent", "NOTES", REVISION_PROMPT)
+knowledge_graph_agent = LyzrStudioAgent("Knowledge Graph Agent", "KNOWLEDGE_GRAPH", GRAPH_PROMPT)
+learning_analytics_agent = LyzrStudioAgent("Learning Analytics Agent", "ANALYTICS", ANALYTICS_PROMPT)
 
-adaptive_tutor_agent = LyzrAgent(
-    name="Adaptive Tutor Agent",
-    system_prompt=(
-        "You are the Adaptive Tutor Agent. Explain academic concepts using metaphors and analogies. "
-        "Adjust explanations to match the student's learning preference (e.g. analogy-based, visual, code-heavy) "
-        "which will be supplied in the context memory."
-    )
-)
-
-quiz_intelligence_agent = LyzrAgent(
-    name="Quiz Intelligence Agent",
-    system_prompt=(
-        "You are the Quiz Intelligence Agent. Generate adaptive multiple-choice questions "
-        "or evaluate spoken user responses for correctness. Detect conceptual depth or misunderstandings."
-    )
-)
-
-revision_planning_agent = LyzrAgent(
-    name="Revision Planning Agent",
-    system_prompt=(
-        "You are the Revision Planning Agent. Optimize study schedules using spaced repetition "
-        "rules (SM-2 forgetting curve). Determine due topics and revision tasks."
-    )
-)
-
-knowledge_graph_agent = LyzrAgent(
-    name="Knowledge Graph Agent",
-    system_prompt=(
-        "You are the Knowledge Graph Agent. Determine hierarchical connections between concepts. "
-        "Identify prerequisites, parallel links, and construct learning paths."
-    )
-)
-
-learning_analytics_agent = LyzrAgent(
-    name="Learning Analytics Agent",
-    system_prompt=(
-        "You are the Learning Analytics Agent. Analyze student logs, quiz scores, timing, and hesitation "
-        "metrics to compute readiness percentages, mastery curves, and identify at-risk topics."
-    )
-)
 
 class MasterOrchestrator:
+    """Lyzr multi-agent orchestrator with Qdrant semantic memory."""
+
     def __init__(self):
         self.agents = {
             "intent": voice_intent_agent,
@@ -192,79 +105,140 @@ class MasterOrchestrator:
             "quiz": quiz_intelligence_agent,
             "revision": revision_planning_agent,
             "graph": knowledge_graph_agent,
-            "analytics": learning_analytics_agent
+            "analytics": learning_analytics_agent,
         }
 
+    def get_agent_status(self) -> list:
+        return [
+            {
+                "name": agent.name,
+                "env_prefix": agent.env_prefix,
+                "configured": agent.configured,
+                "provider": "lyzr",
+            }
+            for agent in self.agents.values()
+        ]
+
     def route_command(self, transcript: str, user_id: str = "demo-user") -> Dict[str, Any]:
-        """Orchestrates user command routing: Classify intent -> Retrieve Memory -> Execute Specialized Agent."""
-        # 1. Classify intent
+        # Instant greeting fallbacks to avoid LLM delays
+        lower_msg = transcript.lower().strip()
+        if "good morning" in lower_msg:
+            return {
+                "intent": "GREETING",
+                "confidence": 1.0,
+                "entities": {},
+                "response": "Good morning! Ready for another learning session? What topic would you like to explore today?",
+                "agentExecuted": "tutor",
+            }
+        elif any(x in lower_msg for x in ["hello", "hi", "hey"]):
+            return {
+                "intent": "GREETING",
+                "confidence": 1.0,
+                "entities": {},
+                "response": "Hello! I'm your Neural Learn study companion. I can help explain concepts, generate quizzes, create revision notes, analyze lectures, and guide your learning. What would you like to study today?",
+                "agentExecuted": "tutor",
+            }
+
+        # 1. Lyzr intent classification
         intent_json = self.agents["intent"].execute(transcript)
         try:
-            intent_data = json.loads(intent_json)
+            clean = intent_json.strip()
+            if clean.startswith("```"):
+                clean = clean.split("\n", 1)[-1]
+            if clean.endswith("```"):
+                clean = clean.rsplit("```", 1)[0]
+            intent_data = json.loads(clean.strip())
         except Exception:
-            intent_data = {"intent": "TUTORING_REQUEST", "confidence": 0.8, "entities": {"topic": transcript}}
-            
+            intent_data = {"intent": "TUTORING_REQUEST", "confidence": 0.75, "entities": {"topic": transcript}}
+
         intent = intent_data.get("intent", "UNKNOWN")
-        entities = intent_data.get("entities", {})
-        
-        # 2. Retrieve Qdrant memory context
+        entities = intent_data.get("entities", {}) or {}
+
+        # 2. Qdrant semantic memory
         topic_query = entities.get("topic", transcript)
         memory_logs = qdrant_service.search_memory("tutoring_memory_collection", topic_query, user_id, limit=3)
         profile = qdrant_service.get_latest_cognitive_profile(user_id) or {
             "learningStyle": "Analogy-based",
-            "weakTopics": {"Deadlock Prevention": 35},
-            "masteryScores": {"DBMS": 67}
         }
         
-        context = {
-            "profile": profile,
-            "recentMemory": memory_logs
-        }
-        
-        # 3. Route to specialized agent
+        # Fetch user learning profile from DB
+        learning_profile = {}
+        db = SessionLocal()
+        try:
+            user_profile = db.query(DBUserProfile).filter(DBUserProfile.id == user_id).first()
+            if user_profile and user_profile.learning_profile_json:
+                learning_profile = json.loads(user_profile.learning_profile_json)
+        except Exception as db_ex:
+            print(f"[LyzrService] Database profile query failed: {db_ex}")
+        finally:
+            db.close()
+            
+        context = {"profile": profile, "recentMemory": memory_logs, "learning_profile": learning_profile}
+
+        # 3. Route to Lyzr specialist agent
         response_text = ""
         agent_executed = "tutor"
-        
-        if intent in ["LECTURE_START", "LECTURE_STOP"]:
+
+        if intent in ("LECTURE_START", "LECTURE_STOP"):
             agent_executed = "lecture"
-            response_text = self.agents["lecture"].execute(f"Action: {intent} for topic: {entities.get('subject', 'DBMS')}", context)
+            response_text = self.agents["lecture"].execute(
+                f"Action: {intent} for subject: {entities.get('subject', 'General')}", context
+            )
         elif intent == "QUIZ_REQUEST":
             agent_executed = "quiz"
-            response_text = self.agents["quiz"].execute(f"Generate quiz questions for: {entities.get('topic', 'DBMS')}", context)
-        elif intent in ["REVISION_START", "WEAK_AREAS_QUERY"]:
+            response_text = self.agents["quiz"].execute(
+                f"Generate quiz for topic: {entities.get('topic', 'General')}", context
+            )
+        elif intent in ("REVISION_START", "WEAK_AREAS_QUERY", "FLASHCARD_CREATE"):
             agent_executed = "revision"
-            response_text = self.agents["revision"].execute(f"Prepare schedule for: {entities.get('topic', 'All')}", context)
-        elif intent in ["ANALYTICS_QUERY", "PROGRESS_QUERY"]:
+            response_text = self.agents["revision"].execute(
+                f"Prepare revision for: {entities.get('topic', 'all topics')}", context
+            )
+        elif intent in ("ANALYTICS_QUERY", "PROGRESS_QUERY"):
             agent_executed = "analytics"
             response_text = self.agents["analytics"].execute("Compute exam readiness and strengths", context)
-        elif intent == "ROADMAP_CREATE":
+        elif intent in ("ROADMAP_CREATE", "NAVIGATE_GRAPH") or intent.startswith("NAVIGATE_GRAPH"):
             agent_executed = "graph"
-            response_text = self.agents["graph"].execute(f"Generate learning roadmap for: {entities.get('topic', 'DBMS')}", context)
+            response_text = self.agents["graph"].execute(
+                f"Build concept map for: {entities.get('topic', 'current subject')}", context
+            )
+        elif intent.startswith("NAVIGATE_"):
+            agent_executed = "navigation"
+            target_map = {
+                "NAVIGATE_DASHBOARD": "dashboard",
+                "NAVIGATE_TUTOR": "tutor",
+                "NAVIGATE_LECTURE": "lecture-studio",
+                "NAVIGATE_REVISION": "revision",
+                "NAVIGATE_ANALYTICS": "analytics",
+                "NAVIGATE_GRAPH": "knowledge-graph",
+            }
+            target = target_map.get(intent, "dashboard")
+            response_text = f"Navigating to {target.replace('-', ' ')}."
         else:
-            # Fallback to tutoring response
             agent_executed = "tutor"
             response_text = self.agents["tutor"].execute(transcript, context)
 
-        # 4. Save interaction to memory
+        # 4. Persist to Qdrant
         qdrant_service.store_memory(
             collection_name="voice_command_collection",
             payload={
                 "userId": user_id,
                 "transcript": transcript,
                 "intent": intent,
-                "response": response_text,
+                "response": response_text[:500],
                 "agentExecuted": agent_executed,
-                "timestamp": time.time()
+                "timestamp": time.time(),
             },
-            text_to_embed=transcript
+            text_to_embed=transcript,
         )
-        
+
         return {
             "intent": intent,
-            "confidence": intent_data.get("confidence", 0.9),
+            "confidence": float(intent_data.get("confidence", 0.85)),
             "entities": entities,
             "response": response_text,
-            "agentExecuted": agent_executed
+            "agentExecuted": agent_executed,
         }
+
 
 master_orchestrator = MasterOrchestrator()

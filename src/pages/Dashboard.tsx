@@ -85,28 +85,40 @@ function AgentItem({ agent }: { agent: AgentStatus }) {
   );
 }
 
+const recColors = [
+  "border-[var(--neuro-amber)]/30 bg-[var(--neuro-amber)]/5 text-[var(--neuro-amber)]",
+  "border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5 text-[var(--neuro-rose)]",
+  "border-[var(--neuro-green)]/30 bg-[var(--neuro-green)]/5 text-[var(--neuro-green)]",
+  "border-[var(--neuro-cyan)]/30 bg-[var(--neuro-cyan)]/5 text-[var(--neuro-cyan)]",
+];
+
 export function Dashboard() {
-  const { 
-    setPage, 
-    profile, 
-    retentionData, 
-    masteryData, 
-    weakTopics, 
-    lectures, 
-    agents, 
-    fetchDashboardData 
+  const {
+    setPage,
+    profile,
+    retentionData,
+    masteryData,
+    weakTopics,
+    lectures,
+    concepts,
+    agents,
+    fetchDashboardData,
   } = useAppStore();
 
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
+  const urgentTopic = weakTopics.find((t) => t.daysUntilForgetting <= 3) ?? weakTopics[0];
+  const recommendations = profile.recommendations ?? [];
+  const strongestConcept = concepts.length
+    ? [...concepts].sort((a, b) => b.mastery - a.mastery)[0]
+    : null;
+
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      {/* Hero */}
       <div className="relative rounded-xl border border-[var(--neuro-cyan)]/20 bg-card overflow-hidden p-6">
         <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/3 pointer-events-none" />
-        <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-primary/5 blur-3xl pointer-events-none" />
         <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -115,8 +127,16 @@ export function Dashboard() {
             </div>
             <h1 className="text-2xl font-bold tracking-tight mb-1">Good morning, {profile.name}</h1>
             <p className="text-muted-foreground text-sm max-w-lg">
-              Your AI learning companion has processed <span className="text-primary font-semibold">{profile.conceptsMastered} concepts</span> and detected{" "}
-              <span className="text-[var(--neuro-rose)] font-semibold">5 weak topics</span> at risk of forgetting.
+              Your AI learning companion has processed <span className="text-primary font-semibold">{profile.conceptsMastered} concepts</span>
+              {weakTopics.length > 0 && (
+                <> and detected <span className="text-[var(--neuro-rose)] font-semibold">{weakTopics.length} weak topic{weakTopics.length !== 1 ? "s" : ""}</span> at risk of forgetting.</>
+              )}
+              {weakTopics.length === 0 && lectures.length === 0 && (
+                <> — record your first lecture to begin building your knowledge graph.</>
+              )}
+              {weakTopics.length === 0 && lectures.length > 0 && (
+                <> — all tracked topics are within healthy retention range.</>
+              )}
             </p>
           </div>
           <div className="flex gap-2 shrink-0">
@@ -128,27 +148,29 @@ export function Dashboard() {
             </Button>
           </div>
         </div>
-        <div className="relative mt-4 flex items-center gap-3 rounded-lg border border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5 px-4 py-2.5">
-          <AlertTriangle className="size-4 text-[var(--neuro-rose)] shrink-0" />
-          <p className="text-sm">
-            <span className="font-semibold text-[var(--neuro-rose)]">Retention Alert:</span>{" "}
-            <span className="text-foreground/80">You are likely to forget <strong>Deadlock Prevention</strong> within 2 days. Revision recommended.</span>
-          </p>
-          <Button variant="ghost" size="sm" className="ml-auto shrink-0 text-[var(--neuro-rose)] hover:text-[var(--neuro-rose)] hover:bg-[var(--neuro-rose)]/10" onClick={() => setPage("revision")}>
-            Revise Now <ChevronRight className="size-3 ml-1" />
-          </Button>
-        </div>
+        {urgentTopic && (
+          <div className="relative mt-4 flex items-center gap-3 rounded-lg border border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5 px-4 py-2.5">
+            <AlertTriangle className="size-4 text-[var(--neuro-rose)] shrink-0" />
+            <p className="text-sm">
+              <span className="font-semibold text-[var(--neuro-rose)]">Retention Alert:</span>{" "}
+              <span className="text-foreground/80">
+                <strong>{urgentTopic.name}</strong> may drop below retention threshold in {urgentTopic.daysUntilForgetting} day{urgentTopic.daysUntilForgetting !== 1 ? "s" : ""} ({urgentTopic.score}% mastery).
+              </span>
+            </p>
+            <Button variant="ghost" size="sm" className="ml-auto shrink-0 text-[var(--neuro-rose)] hover:text-[var(--neuro-rose)] hover:bg-[var(--neuro-rose)]/10" onClick={() => setPage("revision")}>
+              Revise Now <ChevronRight className="size-3 ml-1" />
+            </Button>
+          </div>
+        )}
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Flame} label="Study Streak" value={`${profile.studyStreak}d`} sub="Personal best" color="text-[var(--neuro-amber)]" />
-        <StatCard icon={Clock} label="Study Hours" value={profile.totalHours} sub="This month" color="text-[var(--neuro-cyan)]" />
-        <StatCard icon={Brain} label="Concepts" value={profile.conceptsMastered} sub="Mastered" color="text-[var(--neuro-green)]" />
-        <StatCard icon={Target} label="Exam Readiness" value={`${profile.examReadiness}%`} sub="Estimated" color="text-primary" />
+        <StatCard icon={Flame} label="Study Streak" value={`${profile.studyStreak}d`} sub={profile.studyStreak > 0 ? "Consecutive lecture days" : "Record a lecture to start"} color="text-[var(--neuro-amber)]" />
+        <StatCard icon={Clock} label="Study Hours" value={profile.totalHours} sub={`${lectures.length} lecture${lectures.length !== 1 ? "s" : ""} logged`} color="text-[var(--neuro-cyan)]" />
+        <StatCard icon={Brain} label="Key Concepts" value={profile.conceptsMastered || concepts.length} sub={`${concepts.length} in knowledge graph`} color="text-[var(--neuro-green)]" />
+        <StatCard icon={Target} label="Exam Readiness" value={`${profile.examReadiness}%`} sub="From concept mastery avg" color="text-primary" />
       </div>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 border-border/50">
           <CardHeader className="pb-2">
@@ -157,26 +179,30 @@ export function Dashboard() {
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Activity className="size-4 text-primary" /> Memory Retention Curve
                 </CardTitle>
-                <CardDescription className="text-xs">Semantic memory health over time</CardDescription>
+                <CardDescription className="text-xs">Derived from concept review history</CardDescription>
               </div>
               <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">7 days</Badge>
             </div>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={retentionConfig} className="h-[180px] w-full">
-              <AreaChart data={retentionData}>
-                <defs>
-                  <linearGradient id="retGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} tickLine={false} axisLine={false} />
-                <YAxis domain={[60, 100]} tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} tickLine={false} axisLine={false} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Area type="monotone" dataKey="retention" stroke="var(--chart-1)" strokeWidth={2} fill="url(#retGrad)" dot={false} />
-              </AreaChart>
-            </ChartContainer>
+            {retentionData.length === 0 || retentionData.every((d) => d.retention === 0) ? (
+              <p className="text-xs text-muted-foreground text-center py-12">No retention data yet. Record lectures and review flashcards to build your curve.</p>
+            ) : (
+              <ChartContainer config={retentionConfig} className="h-[180px] w-full">
+                <AreaChart data={retentionData}>
+                  <defs>
+                    <linearGradient id="retGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} tickLine={false} axisLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} tickLine={false} axisLine={false} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Area type="monotone" dataKey="retention" stroke="var(--chart-1)" strokeWidth={2} fill="url(#retGrad)" dot={false} />
+                </AreaChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -187,45 +213,47 @@ export function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={masteryConfig} className="h-[180px] w-full">
-              <RadarChart data={masteryData} cx="50%" cy="50%" outerRadius="70%">
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: "var(--muted-foreground)" }} />
-                <Radar name="mastery" dataKey="mastery" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.15} strokeWidth={1.5} />
-              </RadarChart>
-            </ChartContainer>
+            {masteryData.length === 0 || masteryData[0]?.subject === "No data yet" ? (
+              <p className="text-xs text-muted-foreground text-center py-12">No subjects tracked yet.</p>
+            ) : (
+              <ChartContainer config={masteryConfig} className="h-[180px] w-full">
+                <RadarChart data={masteryData} cx="50%" cy="50%" outerRadius="70%">
+                  <PolarGrid stroke="var(--border)" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: "var(--muted-foreground)" }} />
+                  <Radar name="mastery" dataKey="mastery" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.15} strokeWidth={1.5} />
+                </RadarChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* AI Recommendations */}
-      <Card className="border-[var(--neuro-cyan)]/30 bg-gradient-to-br from-[var(--neuro-cyan)]/5 to-transparent">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Lightbulb className="size-4 text-[var(--neuro-cyan)]" /> Personalized Recommendations
-          </CardTitle>
-          <CardDescription className="text-xs">Based on your learning patterns and weak areas</CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div className="p-3 rounded-lg border border-[var(--neuro-amber)]/30 bg-[var(--neuro-amber)]/5">
-            <p className="text-xs font-semibold text-[var(--neuro-amber)] uppercase tracking-widest mb-1">Next Topic</p>
-            <p className="text-sm text-foreground font-medium">Learn Query Optimization</p>
-            <p className="text-xs text-muted-foreground mt-1">Builds on your BCNF foundation (82% mastery)</p>
-          </div>
-          <div className="p-3 rounded-lg border border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5">
-            <p className="text-xs font-semibold text-[var(--neuro-rose)] uppercase tracking-widest mb-1">Urgent</p>
-            <p className="text-sm text-foreground font-medium">Revise Deadlock Prevention</p>
-            <p className="text-xs text-muted-foreground mt-1">Forgetting in 2 days • 15 min session</p>
-          </div>
-          <div className="p-3 rounded-lg border border-[var(--neuro-green)]/30 bg-[var(--neuro-green)]/5">
-            <p className="text-xs font-semibold text-[var(--neuro-green)] uppercase tracking-widest mb-1">Strength</p>
-            <p className="text-sm text-foreground font-medium">ACID Properties Mastered</p>
-            <p className="text-xs text-muted-foreground mt-1">Consider deeper topics or teaching</p>
-          </div>
-        </CardContent>
-      </Card>
+      {(recommendations.length > 0 || strongestConcept) && (
+        <Card className="border-[var(--neuro-cyan)]/30 bg-gradient-to-br from-[var(--neuro-cyan)]/5 to-transparent">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Lightbulb className="size-4 text-[var(--neuro-cyan)]" /> Personalized Recommendations
+            </CardTitle>
+            <CardDescription className="text-xs">Generated from your lectures, flashcards, and mastery scores</CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {recommendations.map((rec, i) => (
+              <div key={i} className={cn("p-3 rounded-lg border", recColors[i % recColors.length])}>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-1 opacity-80">Recommendation</p>
+                <p className="text-sm text-foreground font-medium">{rec}</p>
+              </div>
+            ))}
+            {recommendations.length === 0 && strongestConcept && (
+              <div className="p-3 rounded-lg border border-[var(--neuro-green)]/30 bg-[var(--neuro-green)]/5">
+                <p className="text-xs font-semibold text-[var(--neuro-green)] uppercase tracking-widest mb-1">Strongest</p>
+                <p className="text-sm text-foreground font-medium">{strongestConcept.name}</p>
+                <p className="text-xs text-muted-foreground mt-1">{Math.round(strongestConcept.mastery)}% mastery · {strongestConcept.subject}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Bottom grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card className="border-border/50">
           <CardHeader className="pb-3">
@@ -239,7 +267,11 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 pt-0">
-            {weakTopics.slice(0, 4).map((t) => <WeakTopicItem key={t.name} topic={t} />)}
+            {weakTopics.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">No weak topics detected yet.</p>
+            ) : (
+              weakTopics.slice(0, 4).map((t) => <WeakTopicItem key={t.name} topic={t} />)
+            )}
           </CardContent>
         </Card>
 
@@ -255,18 +287,22 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2 pt-0">
-            {lectures.slice(0, 4).map((lecture) => (
-              <div key={lecture.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/40 bg-muted/10 hover:bg-muted/20 transition-colors cursor-pointer">
-                <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                  <BookOpen className="size-3.5 text-primary" />
+            {lectures.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">No lectures recorded yet.</p>
+            ) : (
+              lectures.slice(0, 4).map((lecture) => (
+                <div key={lecture.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/40 bg-muted/10 hover:bg-muted/20 transition-colors cursor-pointer">
+                  <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                    <BookOpen className="size-3.5 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">{lecture.title}</p>
+                    <p className="text-[10px] text-muted-foreground">{lecture.subject} · {lecture.duration}m · {lecture.conceptCount} concepts</p>
+                  </div>
+                  <Badge variant="outline" className="text-[10px] shrink-0">{lecture.flashcardCount} cards</Badge>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{lecture.title}</p>
-                  <p className="text-[10px] text-muted-foreground">{lecture.subject} · {lecture.duration}m · {lecture.conceptCount} concepts</p>
-                </div>
-                <Badge variant="outline" className="text-[10px] shrink-0">{lecture.flashcardCount} cards</Badge>
-              </div>
-            ))}
+              ))
+            )}
           </CardContent>
         </Card>
 
@@ -275,7 +311,7 @@ export function Dashboard() {
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Zap className="size-4 text-[var(--neuro-amber)]" /> Agent Activity
             </CardTitle>
-            <CardDescription className="text-xs">Lyzr orchestration network</CardDescription>
+            <CardDescription className="text-xs">Distributed agent network</CardDescription>
           </CardHeader>
           <CardContent className="pt-0 divide-y divide-border/30">
             {agents.map((agent) => <AgentItem key={agent.id} agent={agent} />)}
@@ -283,7 +319,6 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* Weekly goal */}
       <Card className="border-border/50">
         <CardContent className="pt-5 pb-4">
           <div className="flex items-center gap-4 flex-wrap">
@@ -293,13 +328,14 @@ export function Dashboard() {
                 <span className="text-sm font-bold text-primary">{profile.weeklyGoalProgress}%</span>
               </div>
               <Progress value={profile.weeklyGoalProgress} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-1">5 of 7 days active · 3 lectures processed · 12 concepts strengthened</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {profile.studyStreak} day streak · {lectures.length} lectures · {concepts.length} concepts indexed
+              </p>
             </div>
             <Separator orientation="vertical" className="h-12 hidden sm:block" />
             <div className="text-right shrink-0">
-              <p className="text-xs text-muted-foreground">Learning style detected</p>
+              <p className="text-xs text-muted-foreground">Learning style</p>
               <p className="text-sm font-semibold text-primary">{profile.preferredStyle}</p>
-              <p className="text-[10px] text-muted-foreground/60">Qdrant profile · 47 interactions</p>
             </div>
           </div>
         </CardContent>

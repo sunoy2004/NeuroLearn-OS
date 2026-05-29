@@ -9,3 +9,4 @@ sqlalchemy>=2.0.25
 httpx>=0.26.0
 lyzr>=0.1.20
 python-multipart>=0.0.9
+networkx>=3.0

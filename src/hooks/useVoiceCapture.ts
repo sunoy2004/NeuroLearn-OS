@@ -128,7 +128,7 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
       };
 
     } catch (err) {
-      setError("Failed to initialize Omi Voice channel.");
+      setError("Failed to initialize voice channel.");
       setIsListening(false);
     }
   }, [processText]);

@@ -1,5 +1,7 @@
 export const API_BASE = "http://localhost:8000";
 export const WS_BASE = "ws://localhost:8000";
+export const AGENT_WS_BASE = "ws://localhost:8001";
+
 
 export async function apiRequest<T = any>(
   endpoint: string,

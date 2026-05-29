@@ -8,7 +8,7 @@ from backend.database import init_db, SessionLocal
 from backend.services.db_service import seed_database
 from backend.services.qdrant_service import initialize_qdrant
 
-from backend.routers import voice, tutor, quiz, revision, analytics, graph
+from backend.routers import voice, tutor, quiz, revision, analytics, graph, stack
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,6 +52,7 @@ app.include_router(quiz.router)
 app.include_router(revision.router)
 app.include_router(analytics.router)
 app.include_router(graph.router)
+app.include_router(stack.router)
 
 @app.get("/")
 def read_root():

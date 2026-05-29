@@ -115,35 +115,6 @@ class MemoryStore {
     for (const c of memoryCollections) {
       this.collections.set(c.name, []);
     }
-    this.seedDemoData();
-  }
-
-  private seedDemoData(): void {
-    const cognitiveMemory = this.collections.get("cognitive_profile_memory") || [];
-    cognitiveMemory.push({
-      id: "cognitive-profile-1",
-      payload: {
-        userId: this.userId,
-        learningStyle: "Analogy-based",
-        weakTopics: {
-          "Deadlock Prevention": 35,
-          "BCNF Normalization": 42,
-          "Query Optimization": 48,
-        },
-        strongTopics: {
-          "ACID Properties": 89,
-          "B+ Tree Indexing": 85,
-          SQL: 78,
-        },
-        masteryScores: {
-          DBMS: 67,
-          OS: 72,
-          "Data Structures": 81,
-        },
-        avgHesitationTime: 1.2,
-        lastUpdated: Date.now(),
-      },
-    });
   }
 
   async store(collectionName: string, point: MemoryPoint): Promise<void> {
@@ -236,13 +207,10 @@ export async function getCognitiveProfile(): Promise<SearchResult | null> {
       payload: {
         userId: "demo-user",
         learningStyle: profile.preferredStyle,
-        avgHesitationTime: 1.5,
-        masteryScores: {
-          DBMS: profile.conceptsMastered * 1.5,
-          OS: profile.examReadiness * 0.9,
-          "Data Structures": 81
-        }
-      }
+        masteryScores: profile.conceptsMastered > 0
+          ? { overall: profile.examReadiness }
+          : {},
+      },
     };
   } catch (e) {
     console.warn("Backend analytics query unavailable, loading from local memory client.", e);

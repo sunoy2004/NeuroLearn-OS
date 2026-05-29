@@ -71,6 +71,31 @@ const intentPatterns: Record<VoiceIntent, RegExp[]> = {
     /tell me more (?:about )?/i,
     /elaborate on/i,
   ],
+  GREETING: [
+    /^(?:hello|hi|hey|hiya|howdy)(?:\s|$|!|,)/i,
+    /^good (?:morning|afternoon|evening|day)/i,
+    /^how are you/i,
+    /^what(?:'s|\s+is) up/i,
+    /^nice to (?:meet|see) you/i,
+    /^greetings/i,
+  ],
+  EDUCATIONAL_QUESTION: [
+    /what (?:is|are) (?:the )?(?:difference|concept|definition|meaning)/i,
+    /(?:can you |please )?(?:teach|explain|describe|define) (?:me )?(?:about )?(?:what |how |why )?/i,
+    /tell me about /i,
+    /how (?:do|does|can|would) /i,
+    /why (?:do|does|is|are|can) /i,
+    /what happens (?:when|if)/i,
+    /give me an example/i,
+    /what(?:'s| is) the (?:concept|idea|theory)/i,
+  ],
+  GENERAL_CONVERSATION: [
+    /^(?:thanks|thank you|thank)/i,
+    /^(?:ok|okay|sure|alright|great|cool)/i,
+    /^what can you (?:do|help)/i,
+    /^help me/i,
+    /^i (?:need|want) help/i,
+  ],
   UNKNOWN: [],
 };
 
@@ -200,6 +225,9 @@ export function getIntentDescription(intent: VoiceIntent): string {
     WEAK_AREAS_QUERY: "Show weak areas needing improvement",
     PROGRESS_QUERY: "Check learning progress",
     EXPLANATION_REQUEST: "Request detailed explanation",
+    GREETING: "Friendly greeting — conversational response",
+    EDUCATIONAL_QUESTION: "Academic question — educational explanation",
+    GENERAL_CONVERSATION: "General conversation — helpful response",
     UNKNOWN: "Unknown intent - please rephrase",
   };
 
