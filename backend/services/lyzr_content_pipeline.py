@@ -67,7 +67,7 @@ def process_transcript_with_lyzr(
     if not concepts:
         concepts = heuristic_concepts
     if not concepts:
-        concepts = ["General Study Material"]
+        concepts = heuristic_concepts or [title.split(" - ")[0].strip()] if title else []
     summary_data["concepts"] = concepts
     if not summary_data.get("summary"):
         summary_data["summary"] = heuristic_summary.get("summary", "")

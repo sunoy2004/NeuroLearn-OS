@@ -87,51 +87,193 @@ def generate_summary_heuristic(transcript: str, title: str = "Lecture") -> Dict[
     return {
         "title": generated_title,
         "summary": summary,
-        "concepts": concepts if concepts else ["General Study Material"],
+        "concepts": concepts if concepts else [],
     }
 
 
-def generate_flashcards_heuristic(transcript: str, concepts: List[str], lang: str = "en") -> List[Dict[str, str]]:
-    cards = []
-    lang_name = language_display_name(lang)
-    for concept in concepts[:5]:
-        if lang == "hi":
-            front, back = f"{concept} क्या है?", f"{concept} इस व्याख्यान में चर्चा किया गया एक मुख्य विषय है।"
-        elif lang == "bn":
-            front, back = f"{concept} কী?", f"{concept} এই লেকচারে আলোচিত একটি মূল ধারণা।"
-        elif lang == "fr":
-            front, back = f"Qu'est-ce que {concept}?", f"{concept} est un concept clé abordé dans ce cours."
+def _sentences_about_concept(transcript: str, concept: str, max_sentences: int = 3) -> List[str]:
+    if not transcript:
+        return []
+    concept_lower = concept.lower()
+    matched = []
+    for sent in extract_sentences(transcript, 30):
+        if concept_lower in sent.lower():
+            matched.append(sent)
+        if len(matched) >= max_sentences:
+            break
+    return matched
+
+
+def _extract_from_notes(notes: str, concept: str, max_chars: int = 400) -> str:
+    if not notes or not concept:
+        return ""
+    concept_lower = concept.lower()
+    lines = notes.split("\n")
+    block: List[str] = []
+    capturing = False
+    for line in lines:
+        if concept_lower in line.lower():
+            capturing = True
+        if capturing:
+            block.append(line.strip())
+            if len("\n".join(block)) > max_chars:
+                break
+        if capturing and line.strip() == "" and len(block) > 2:
+            break
+    return "\n".join(block).strip()[:max_chars]
+
+
+def generate_flashcards_heuristic(
+    transcript: str,
+    concepts: List[str],
+    lang: str = "en",
+    concepts_details: Optional[List[Dict[str, Any]]] = None,
+    notes: str = "",
+) -> List[Dict[str, str]]:
+    """Generate content-rich flashcards from transcript, definitions, and notes."""
+    details_map: Dict[str, Dict[str, Any]] = {}
+    for d in concepts_details or []:
+        if isinstance(d, dict) and d.get("concept"):
+            details_map[d["concept"].lower()] = d
+
+    cards: List[Dict[str, str]] = []
+    seen_fronts: set[str] = set()
+
+    for concept in concepts[:12]:
+        detail = details_map.get(concept.lower(), {})
+        definition = (detail.get("definition") or "").strip()
+        related = detail.get("related_concepts") or []
+        relevant_sents = _sentences_about_concept(transcript, concept, 3)
+        notes_excerpt = _extract_from_notes(notes, concept)
+
+        # Definition card — use actual lecture content
+        if definition and len(definition) > 25 and "key concept" not in definition.lower()[:30]:
+            back = definition
+        elif relevant_sents:
+            back = relevant_sents[0]
+        elif notes_excerpt:
+            back = notes_excerpt
         else:
-            front, back = f"What is {concept}?", f"{concept} is a key concept discussed in this lecture."
-        cards.append({"front": front, "back": back, "topic": concept})
+            back = f"{concept} — review your lecture notes for a detailed explanation."
+
+        front = f"What is {concept} and why does it matter?"
+        if front not in seen_fronts:
+            cards.append({"front": front, "back": back, "topic": concept})
+            seen_fronts.add(front)
+
+        # Application / detail card from second sentence
+        if relevant_sents and len(relevant_sents) > 1:
+            front2 = f"Explain how {concept} works based on your lecture."
+            if front2 not in seen_fronts:
+                cards.append({"front": front2, "back": relevant_sents[1], "topic": concept})
+                seen_fronts.add(front2)
+        elif notes_excerpt and len(notes_excerpt) > 60:
+            front2 = f"Summarize the key details about {concept} from your study notes."
+            if front2 not in seen_fronts:
+                cards.append({"front": front2, "back": notes_excerpt[:500], "topic": concept})
+                seen_fronts.add(front2)
+
+        # Comparison card if related concepts exist
+        if related:
+            other = related[0] if isinstance(related[0], str) else str(related[0])
+            front3 = f"How does {concept} differ from or relate to {other}?"
+            other_sents = _sentences_about_concept(transcript, other, 1)
+            back3 = (
+                f"{concept} and {other} are related concepts covered in your lectures. "
+                f"{other_sents[0] if other_sents else definition or back}"
+            )
+            if front3 not in seen_fronts:
+                cards.append({"front": front3, "back": back3, "topic": concept})
+                seen_fronts.add(front3)
 
     if not cards and transcript:
-        sentences = extract_sentences(transcript, 2)
-        for i, sent in enumerate(sentences):
-            cards.append({
-                "front": f"Explain the following from the lecture: \"{sent[:60]}...\"",
-                "back": sent,
-                "topic": "Lecture Content",
-            })
+        for sent in extract_sentences(transcript, 6):
+            front = f"From your lecture: what is the main idea in this statement?"
+            cards.append({"front": front, "back": sent, "topic": "Lecture Content"})
+            if len(cards) >= 8:
+                break
+
+    # When few concept cards, add transcript sentence cards for depth
+    if len(cards) < 8 and transcript:
+        for sent in extract_sentences(transcript, 12):
+            if len(sent) < 40:
+                continue
+            front = f"Explain this from your lecture: \"{sent[:70]}...\""
+            if front not in seen_fronts:
+                topic = concepts[0] if concepts else "Lecture Content"
+                cards.append({"front": front, "back": sent, "topic": topic})
+                seen_fronts.add(front)
+            if len(cards) >= 15:
+                break
+
     return cards
 
 
-def generate_quiz_heuristic(concepts: List[str]) -> List[Dict[str, Any]]:
-    questions = []
-    for concept in concepts[:3]:
-        questions.append({
-            "question": f"Which statement best describes {concept}?",
+def generate_quiz_heuristic(
+    concepts: List[str],
+    transcript: str = "",
+    concepts_details: Optional[List[Dict[str, Any]]] = None,
+    notes: str = "",
+    count: int = 10,
+) -> List[Dict[str, Any]]:
+    """Generate multiple MCQ questions grounded in lecture content."""
+    details_map: Dict[str, Dict[str, Any]] = {}
+    for d in concepts_details or []:
+        if isinstance(d, dict) and d.get("concept"):
+            details_map[d["concept"].lower()] = d
+
+    questions: List[Dict[str, Any]] = []
+    pool = concepts if concepts else ["General Study"]
+
+    q_templates = [
+        lambda c, ctx: {
+            "question": f"Which statement best describes {c} based on your lecture materials?",
             "options": [
-                f"{concept} is a core concept covered in this lecture",
-                f"{concept} is unrelated to this subject",
-                f"{concept} has been deprecated in modern systems",
-                "None of the above",
+                ctx[:120] if ctx else f"{c} is a core concept explained in your lectures",
+                f"{c} is unrelated to this subject area",
+                f"{c} has no practical applications",
+                f"{c} was not discussed in any lecture",
             ],
             "correct": 0,
-            "explanation": f"{concept} was identified as a key topic in your lecture transcript.",
-            "topic": concept,
-        })
-    return questions
+            "explanation": ctx[:200] if ctx else f"{c} was covered in your study materials.",
+            "topic": c,
+        },
+        lambda c, ctx: {
+            "question": f"What is the primary purpose or role of {c}?",
+            "options": [
+                f"It is fundamental to understanding the topic as explained in lecture",
+                "It is only used in legacy systems",
+                "It eliminates the need for other concepts",
+                "It has no defined purpose",
+            ],
+            "correct": 0,
+            "explanation": ctx[:200] if ctx else f"Review your notes on {c}.",
+            "topic": c,
+        },
+        lambda c, ctx: {
+            "question": f"True or False: {c} was identified as an important concept in your lectures.",
+            "options": ["True", "False", "Partially true", "Not covered"],
+            "correct": 0,
+            "explanation": f"{c} appears in your lecture concepts and study materials.",
+            "topic": c,
+        },
+    ]
+
+    idx = 0
+    while len(questions) < count:
+        concept = pool[idx % len(pool)]
+        detail = details_map.get(concept.lower(), {})
+        definition = detail.get("definition", "")
+        sents = _sentences_about_concept(transcript, concept, 1)
+        notes_bit = _extract_from_notes(notes, concept, 200)
+        ctx = definition or (sents[0] if sents else notes_bit)
+
+        template = q_templates[len(questions) % len(q_templates)]
+        q = template(concept, ctx)
+        questions.append(q)
+        idx += 1
+
+    return questions[:count]
 
 
 def generate_notes_heuristic(transcript: str, concepts: List[str], title: str, subject: str, lang: str = "en") -> str:
@@ -223,7 +365,7 @@ async def process_transcript_with_llm_or_heuristic(
 
     concepts = summary_data.get("concepts") or extract_concepts_from_transcript(transcript)
     if not concepts:
-        concepts = extract_concepts_from_transcript(transcript) or ["General Study Material"]
+        concepts = extract_concepts_from_transcript(transcript) or []
     summary_data["concepts"] = concepts
 
     fc_prompt = prompt_with_language(

@@ -147,7 +147,11 @@ function ContextPanel() {
 }
 
 function buildSuggestedPrompts(concepts: { name: string; subject: string }[], weakTopics: { name: string }[], lectures: { title: string }[]): string[] {
-  const prompts: string[] = [];
+  const prompts: string[] = [
+    "Teach me about Agent AI from scratch.",
+    "Explain dynamic programming with examples.",
+    "What is the difference between stack and queue?",
+  ];
   if (concepts.length > 0) {
     prompts.push(`Explain ${concepts[0].name} in simple terms.`);
   }
@@ -157,13 +161,7 @@ function buildSuggestedPrompts(concepts: { name: string; subject: string }[], we
   if (lectures.length > 0) {
     prompts.push(`Summarize key points from "${lectures[0].title}".`);
   }
-  if (concepts.length > 1) {
-    prompts.push(`Generate a quiz on ${concepts[1].name}.`);
-  }
-  if (prompts.length === 0) {
-    prompts.push("What should I study first?");
-  }
-  return prompts.slice(0, 5);
+  return prompts.slice(0, 6);
 }
 
 export function AiTutor() {

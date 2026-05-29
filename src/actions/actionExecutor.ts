@@ -98,10 +98,11 @@ export function registerDefaultActions() {
     name: "open_quiz",
     handler: (payload) => {
       navigateTo("revision");
-      const topic = payload?.topic || "DBMS";
-      useAppStore.getState().fetchQuizQuestions(topic);
+      const topic = payload?.topic || "General";
+      window.dispatchEvent(new CustomEvent("revision_quiz_topic", { detail: { topic } }));
+      useAppStore.getState().fetchQuizQuestions(topic, { count: 10, forceRegenerate: true });
       useAppStore.getState().addAgentNotification(
-        `Dynamic quiz generated for topic: ${topic}`,
+        `Generating quiz on ${topic} from your lecture materials...`,
         "success",
         "QuizAgent"
       );

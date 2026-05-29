@@ -55,6 +55,7 @@ AGENT_ENV_PREFIXES: Dict[str, str] = {
     "tutor": "TUTOR",
     "analytics": "ANALYTICS",
     "knowledge_graph": "KNOWLEDGE_GRAPH",
+    "educational_quality": "QUIZ",
 }
 
 AGENT_DISPLAY_NAMES: Dict[str, str] = {
@@ -69,6 +70,7 @@ AGENT_DISPLAY_NAMES: Dict[str, str] = {
     "tutor": "Tutor Agent",
     "analytics": "Analytics Agent",
     "knowledge_graph": "Knowledge Graph Agent",
+    "educational_quality": "Educational Quality Checker Agent",
 }
 
 DEFAULT_MODELS: Dict[str, str] = {
@@ -155,7 +157,7 @@ def load_all_agent_configs() -> Dict[str, AgentLLMConfig]:
     configs: Dict[str, AgentLLMConfig] = {}
     for agent_id in (
         "orchestrator", "lecture", "notes", "flashcard",
-        "quiz", "tutor", "analytics", "knowledge_graph",
+        "quiz", "tutor", "analytics", "knowledge_graph", "educational_quality",
     ):
         configs[agent_id] = load_agent_config(agent_id)
     return configs

@@ -14,6 +14,7 @@ from agent_service.agents.flashcard_agent import FlashcardAgent
 from agent_service.agents.notes_agent import NotesAgent
 from agent_service.agents.analytics_agent import AnalyticsAgent
 from agent_service.agents.knowledge_graph_agent import KnowledgeGraphAgent
+from agent_service.agents.educational_quality_agent import EducationalQualityAgent
 
 
 class AgentBootstrap:
@@ -51,6 +52,7 @@ class AgentBootstrap:
             ("notes", NotesAgent, "notes"),
             ("analytics", AnalyticsAgent, "analytics"),
             ("knowledge_graph", KnowledgeGraphAgent, "knowledge_graph"),
+            ("educational_quality", EducationalQualityAgent, "quiz"),
         ]
 
         self.health = []

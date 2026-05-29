@@ -189,8 +189,15 @@ export class PersistentVoiceSessionManager {
           if (data.event === "quiz_generated") {
             console.log("[PersistentVoiceSessionManager] Realtime Quiz generated");
             agentRegistry.complete("quiz", `Quiz ready on ${data.topic || "topic"}`);
-            useAppStore.getState().fetchQuizQuestions(data.topic || "General");
-            useAppStore.getState().addAgentNotification("New quiz questions generated!", "success", "Quiz Agent");
+            useAppStore.getState().fetchQuizQuestions(data.topic || "General", {
+              count: data.count ?? 10,
+              forceRegenerate: true,
+            });
+            useAppStore.getState().addAgentNotification(
+              `New quiz (${data.count ?? 10} questions) generated for ${data.topic || "topic"}!`,
+              "success",
+              "Quiz Agent"
+            );
             return;
           }
 

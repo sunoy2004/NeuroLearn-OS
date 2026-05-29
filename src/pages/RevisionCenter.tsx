@@ -9,15 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp, FileText, ExternalLink } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import type { Flashcard } from "@/types";
 import { cn } from "@/lib/utils";
 import { quizStore } from "@/services/quizStore";
 import { apiRequest } from "@/services/api";
 import { useAgent } from "@/context/AgentContext";
 
-function FlashcardViewer() {
+function FlashcardViewer({ cards }: { cards?: Flashcard[] }) {
   const activeFlashcardIndex = useAppStore((s) => s.activeFlashcardIndex);
   const setActiveFlashcardIndex = useAppStore((s) => s.setActiveFlashcardIndex);
-  const flashcards = useAppStore((s) => s.flashcards);
+  const storeFlashcards = useAppStore((s) => s.flashcards);
+  const flashcards = cards ?? storeFlashcards;
   const [flipped, setFlipped] = useState(false);
 
   if (!flashcards || flashcards.length === 0) {
@@ -180,6 +182,9 @@ export function RevisionCenter() {
   const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
   const [selectedLectureId, setSelectedLectureId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("flashcards");
+  const [quizTopic, setQuizTopic] = useState("");
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [flashcardTopicFilter, setFlashcardTopicFilter] = useState<string | "all">("all");
 
   const weakTopics = useAppStore((s) => s.weakTopics);
   const fetchDashboardData = useAppStore((s) => s.fetchDashboardData);
@@ -191,6 +196,8 @@ export function RevisionCenter() {
   const lectures = useAppStore((s) => s.lectures);
   const profile = useAppStore((s) => s.profile);
   
+  const quizQuestions = useAppStore((s) => s.quizQuestions);
+
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTopics, setGoalTopics] = useState("");
   const [goalTimeline, setGoalTimeline] = useState("");
@@ -214,6 +221,46 @@ export function RevisionCenter() {
       setSelectedLectureId(lectures[0].id);
     }
   }, [lectures, selectedLectureId]);
+
+  // Voice agent opens quiz with a topic
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const topic = (e as CustomEvent).detail?.topic;
+      if (topic) {
+        setQuizTopic(topic);
+        setActiveTab("quiz");
+      }
+    };
+    window.addEventListener("revision_quiz_topic", handler);
+    return () => window.removeEventListener("revision_quiz_topic", handler);
+  }, []);
+
+  const allTopics = Array.from(
+    new Set([
+      ...lectures.flatMap((l) => l.topics),
+      ...weakTopics.map((t) => t.name),
+    ])
+  ).filter(Boolean);
+
+  const filteredFlashcards =
+    flashcardTopicFilter === "all"
+      ? flashcards
+      : flashcards.filter(
+          (fc) => fc.topic.toLowerCase().includes(flashcardTopicFilter.toLowerCase())
+        );
+
+  async function handleGenerateQuiz(topic?: string) {
+    const t = (topic || quizTopic || allTopics[0] || "General").trim();
+    if (!t) return;
+    setQuizLoading(true);
+    setQuizTopic(t);
+    setActiveTab("quiz");
+    try {
+      await fetchQuizQuestions(t, { count: 10, forceRegenerate: true });
+    } finally {
+      setQuizLoading(false);
+    }
+  }
 
   async function handleCreateGoal() {
     try {
@@ -361,10 +408,42 @@ export function RevisionCenter() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Spaced Repetition</CardTitle>
-                  <CardDescription className="text-xs">SM-2 algorithm · {flashcards.length} cards due</CardDescription>
+                  <CardDescription className="text-xs">
+                    SM-2 algorithm · {filteredFlashcards.length} cards
+                    {flashcardTopicFilter !== "all" ? ` on ${flashcardTopicFilter}` : " total"}
+                  </CardDescription>
+                  {allTopics.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-2">
+                      <Button
+                        variant={flashcardTopicFilter === "all" ? "secondary" : "ghost"}
+                        size="sm"
+                        className="text-[10px] h-6"
+                        onClick={() => setFlashcardTopicFilter("all")}
+                      >
+                        All
+                      </Button>
+                      {allTopics.slice(0, 8).map((t) => (
+                        <Button
+                          key={t}
+                          variant={flashcardTopicFilter === t ? "secondary" : "ghost"}
+                          size="sm"
+                          className="text-[10px] h-6"
+                          onClick={() => setFlashcardTopicFilter(t)}
+                        >
+                          {t}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent>
-                  <FlashcardViewer />
+                  {filteredFlashcards.length > 0 ? (
+                    <FlashcardViewer cards={filteredFlashcards} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No flashcards for this topic. Record a lecture to generate content-rich cards.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -373,7 +452,40 @@ export function RevisionCenter() {
               <Card className="border-border/50">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Adaptive Quiz</CardTitle>
-                  <CardDescription className="text-xs">Generated dynamically · Targets weakness vectors</CardDescription>
+                  <CardDescription className="text-xs">
+                    LLM-generated for any topic — uses your notes when available, expert knowledge otherwise · {quizQuestions.length} loaded
+                  </CardDescription>
+                  <div className="flex gap-2 pt-2 flex-wrap">
+                    <Input
+                      value={quizTopic}
+                      onChange={(e) => setQuizTopic(e.target.value)}
+                      placeholder="Topic e.g. Agent AI, Dynamic Programming..."
+                      className="h-8 text-xs flex-1 min-w-[180px]"
+                    />
+                    <Button
+                      size="sm"
+                      className="text-xs h-8"
+                      disabled={quizLoading}
+                      onClick={() => handleGenerateQuiz()}
+                    >
+                      {quizLoading ? "Generating..." : "Generate 10 Questions"}
+                    </Button>
+                  </div>
+                  {allTopics.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {allTopics.slice(0, 6).map((t) => (
+                        <Button
+                          key={t}
+                          variant="outline"
+                          size="sm"
+                          className="text-[10px] h-6"
+                          onClick={() => handleGenerateQuiz(t)}
+                        >
+                          Quiz: {t}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent>
                   <QuizViewer />

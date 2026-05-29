@@ -235,8 +235,15 @@ export function GlobalVoiceController() {
       case "open_quiz":
         setPage("revision");
         if (action.payload?.topic) {
-          useAppStore.getState().fetchQuizQuestions(action.payload.topic);
-          addAgentNotification(`Active quiz generated for ${action.payload.topic}`, "success", "QuizAgent");
+          useAppStore.getState().fetchQuizQuestions(action.payload.topic, {
+            count: 10,
+            forceRegenerate: true,
+          });
+          addAgentNotification(
+            `Generating ${10} quiz questions on ${action.payload.topic}`,
+            "success",
+            "QuizAgent"
+          );
         }
         break;
       case "open_modal":

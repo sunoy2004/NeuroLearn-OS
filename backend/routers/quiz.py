@@ -2,16 +2,19 @@ import json
 import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
+from typing import Optional
 from pydantic import BaseModel
-from backend.database import get_db, DBQuizQuestion, DBUserProfile, DBWeakTopic, DBConcept
+from backend.database import get_db, DBQuizQuestion, DBUserProfile, DBWeakTopic
 from backend.services import lyzr_service, qdrant_service
+from backend.services.revision_content_service import generate_quiz_for_topic
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
 class QuizGenerateRequest(BaseModel):
     topic: str
     userId: Optional[str] = "demo-user"
+    count: int = 10
+    forceRegenerate: bool = False
 
 class AnswerEvaluateRequest(BaseModel):
     questionId: str
@@ -21,26 +24,27 @@ class AnswerEvaluateRequest(BaseModel):
 
 @router.post("/generate")
 async def generate_quiz_questions(req: QuizGenerateRequest, db: Session = Depends(get_db)):
-    """Generates adaptive quiz questions for a topic, referencing DB and Lyzr Quiz Agent."""
+    """Generate adaptive quiz questions for a topic using LLM + lecture DB context."""
     try:
-        # Check DB first
-        questions = db.query(DBQuizQuestion).filter(DBQuizQuestion.topic.ilike(f"%{req.topic}%")).all()
-        
+        topic = (req.topic or "General").strip()
+        count = max(10, min(req.count, 30))
+
+        questions = generate_quiz_for_topic(
+            topic=topic,
+            db=db,
+            count=count,
+            force_regenerate=req.forceRegenerate,
+        )
+
         if not questions:
-            # Fallback to general questions
-            questions = db.query(DBQuizQuestion).all()
-            
-        return [
-            {
-                "id": q.id,
-                "question": q.question,
-                "options": q.options,
-                "correct": q.correct,
-                "explanation": q.explanation,
-                "topic": q.topic
-            }
-            for q in questions
-        ]
+            raise HTTPException(
+                status_code=404,
+                detail=f"No quiz questions could be generated for '{topic}'. Record a lecture on this topic first.",
+            )
+
+        return questions
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -16,6 +16,7 @@ Each stage has fallback to NLP heuristics when LLM is unavailable.
 
 import re
 import uuid
+import json
 from typing import Dict, Any, List, Optional, Tuple
 
 from concept_keywords import extract_concepts_from_text
@@ -34,6 +35,7 @@ from agent_service.agents.summary_agent import SummaryAgent
 from agent_service.agents.notes_agent import NotesAgent
 from agent_service.agents.flashcard_agent import FlashcardAgent
 from agent_service.agents.quiz_agent import QuizAgent
+from agent_service.agents.educational_quality_agent import EducationalQualityAgent
 
 
 class TranscriptProcessingResult:
@@ -159,11 +161,12 @@ class TranscriptProcessor:
     def __init__(self):
         # Lazy load agent LLMs isolated per specialist
         self.classification_agent = ClassificationAgent(get_agent_llm("lecture"))
-        self.concept_agent = ConceptAgent(get_agent_llm("knowledge_graph"))
+        self.concept_agent = ConceptAgent(get_agent_llm("notes"))
         self.summary_agent = SummaryAgent(get_agent_llm("summary"))
         self.notes_agent = NotesAgent(get_agent_llm("notes"))
         self.flashcard_agent = FlashcardAgent(get_agent_llm("flashcard"))
         self.quiz_agent = QuizAgent(get_agent_llm("quiz"))
+        self.educational_quality_agent = EducationalQualityAgent(get_agent_llm("quiz"))
 
     def process(
         self,
@@ -171,6 +174,8 @@ class TranscriptProcessor:
         title_hint: str,
         subject: str,
         language_hint: Optional[str] = None,
+        user_id: str = "demo-user",
+        lecture_id: str = "",
     ) -> TranscriptProcessingResult:
         """Run the multi-stage transcript processing pipeline with robust fallbacks."""
         # 1. Clean transcript
@@ -181,7 +186,7 @@ class TranscriptProcessor:
             return TranscriptProcessingResult(
                 title=title_hint or "Study Session",
                 category="General",
-                concepts=["General Study Material"],
+                concepts=[],
                 concepts_details=[],
                 relationships=[],
                 summary="Transcript too short to process.",
@@ -241,7 +246,7 @@ class TranscriptProcessor:
         if not concept_names:
             concept_names = extract_concepts_from_text(transcript, max_concepts=8)
             if not concept_names:
-                concept_names = tags if tags else ["General Study Material"]
+                concept_names = tags if tags else ([title] if title and title not in ("Lecture", "Study Session") else [])
             
             # Repopulate detailed format for fallback
             concepts_details = []
@@ -295,26 +300,89 @@ class TranscriptProcessor:
         if not notes or len(notes.strip()) < 20 or "too short" in notes.lower()[:30]:
             notes = generate_notes_heuristic(transcript, concept_names, title, subject, lang)
 
-        # 7. Flashcard Generation (Aim for 20-50 cards)
+        # Retrieve user learning history from SQLite DB
+        learning_history = {}
+        try:
+            from backend.database import SessionLocal, DBUserProfile
+            db = SessionLocal()
+            try:
+                profile = db.query(DBUserProfile).filter(DBUserProfile.id == user_id).first()
+                if profile and profile.learning_profile_json:
+                    learning_history = json.loads(profile.learning_profile_json)
+            except Exception as db_err:
+                print(f"[TranscriptProcessor] DB query for learning profile failed: {db_err}")
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"[TranscriptProcessor] Failed to load learning history: {e}")
+
+        # Quality checker loop (up to 3 attempts total: 1 initial + 2 refinements)
+        feedback = ""
         flashcards = []
-        try:
-            flashcards = self.flashcard_agent.generate_cards(transcript)
-        except Exception as e:
-            print(f"[TranscriptProcessor] Flashcard stage failed: {e}")
-
-        if not flashcards or len(flashcards) < 5:
-            # Fallback to heuristic
-            flashcards = generate_flashcards_heuristic(transcript, concept_names, lang)
-
-        # 8. Quiz Generation (Aim for 30+ questions)
         quizzes = []
-        try:
-            quizzes = self.quiz_agent.generate_quiz(title, transcript, count=30)
-        except Exception as e:
-            print(f"[TranscriptProcessor] Quiz stage failed: {e}")
+        for attempt in range(3):
+            # 7. Flashcard Generation (passing rich context)
+            try:
+                flashcards = self.flashcard_agent.generate_cards(
+                    transcript=transcript,
+                    summary=summary,
+                    notes=notes,
+                    concepts=concepts_details,
+                    relationships=relationships,
+                    lecture_category=category,
+                    lecture_tags=tags,
+                    lecture_id=lecture_id,
+                    context={"feedback": feedback} if feedback else None
+                )
+            except Exception as e:
+                print(f"[TranscriptProcessor] Flashcard stage failed on attempt {attempt + 1}: {e}")
 
-        if not quizzes or len(quizzes) < 5:
-            quizzes = generate_quiz_heuristic(concept_names)
+            if not flashcards or len(flashcards) < 5:
+                flashcards = generate_flashcards_heuristic(
+                    transcript, concept_names, lang,
+                    concepts_details=concepts_details, notes=notes,
+                )
+
+            # 8. Quiz Generation (passing rich context + learning history)
+            try:
+                quizzes = self.quiz_agent.generate_quiz(
+                    topic=title,
+                    transcript=transcript,
+                    concepts=concepts_details,
+                    notes=notes,
+                    flashcards=flashcards,
+                    relationships=relationships,
+                    learning_history=learning_history,
+                    count=10,
+                    context={"feedback": feedback} if feedback else None
+                )
+            except Exception as e:
+                print(f"[TranscriptProcessor] Quiz stage failed on attempt {attempt + 1}: {e}")
+
+            if not quizzes or len(quizzes) < 10:
+                quizzes = generate_quiz_heuristic(
+                    concept_names, transcript=transcript,
+                    concepts_details=concepts_details, notes=notes, count=10,
+                )
+
+            # 9. Verify quality with EducationalQualityAgent
+            try:
+                verification = self.educational_quality_agent.verify_quality(
+                    notes=notes,
+                    flashcards=flashcards,
+                    quizzes=quizzes,
+                    concepts=concepts_details,
+                    relationships=relationships
+                )
+                if verification.get("approved", True):
+                    print(f"[TranscriptProcessor] Quality check approved on attempt {attempt + 1}!")
+                    break
+                else:
+                    feedback = verification.get("feedback", "Educational content does not meet coverage or quality guidelines.")
+                    print(f"[TranscriptProcessor] Quality check failed on attempt {attempt + 1}: {feedback}")
+            except Exception as e:
+                print(f"[TranscriptProcessor] Quality verification exception: {e}")
+                break
 
         return TranscriptProcessingResult(
             title=title,

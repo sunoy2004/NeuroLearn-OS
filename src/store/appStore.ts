@@ -72,7 +72,7 @@ interface AppState {
   fetchDashboardData: () => Promise<void>;
   fetchConceptGraph: () => Promise<void>;
   fetchFlashcards: () => Promise<void>;
-  fetchQuizQuestions: (topic: string) => Promise<void>;
+  fetchQuizQuestions: (topic: string, options?: { count?: number; forceRegenerate?: boolean }) => Promise<void>;
   fetchLearningGoals: () => Promise<void>;
   syncAgentsFromRegistry: () => void;
 }
@@ -179,7 +179,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const data = await apiRequest<Flashcard[]>("/api/revision/flashcards");
       set({ flashcards: data });
-      localStorage.setItem("neurolearn_flashcards", JSON.stringify(data));
+      if (data.length > 0) {
+        localStorage.setItem("neurolearn_flashcards", JSON.stringify(data));
+      } else {
+        localStorage.removeItem("neurolearn_flashcards");
+      }
     } catch (e) {
       console.warn("Failed fetching flashcards from server. Offline fallback active.", e);
       const cache = localStorage.getItem("neurolearn_flashcards");
@@ -189,11 +193,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  fetchQuizQuestions: async (topic: string) => {
+  fetchQuizQuestions: async (topic: string, options?: { count?: number; forceRegenerate?: boolean }) => {
     try {
       const data = await apiRequest<QuizQuestion[]>("/api/quiz/generate", {
         method: "POST",
-        body: JSON.stringify({ topic })
+        body: JSON.stringify({
+          topic,
+          count: options?.count ?? 10,
+          forceRegenerate: options?.forceRegenerate ?? false,
+        })
       });
       set({ quizQuestions: data, quizIndex: 0, quizAnswers: {} });
       localStorage.setItem(`neurolearn_quiz_${topic}`, JSON.stringify(data));

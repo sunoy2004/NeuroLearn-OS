@@ -63,7 +63,13 @@ class DistributedOrchestrator:
         self.active_lecture_title = ""
         self.active_transcript = []
         self.active_tutor_context = {}
-        self.active_revision_context = {}
+        self.active_revision_context = {
+            "mode": "idle",
+            "questions": [],
+            "current_index": 0,
+            "topic": "",
+            "score": 0
+        }
 
         print("[DistributedOrchestrator] All specialist agents initialized.")
 
@@ -112,6 +118,59 @@ class DistributedOrchestrator:
             response_text = "Hello! I'm your Neural Learn study companion. I can help explain concepts, generate quizzes, create revision notes, analyze lectures, and guide your learning. What would you like to study today?"
             self._log_command(user_id, transcript, "GREETING", response_text, "tutor")
             return "GREETING", response_text, AgentAction(action="none")
+
+        # Check if we are in interactive quiz mode
+        if self.active_revision_context.get("mode") == "interactive_quiz":
+            questions = self.active_revision_context.get("questions", [])
+            idx = self.active_revision_context.get("current_index", 0)
+            
+            if idx < len(questions):
+                q = questions[idx]
+                correct_idx = q.get("correct", 0)
+                options = q.get("options", [])
+                correct_answer = options[correct_idx] if options else "correct answer"
+                
+                # Evaluate user answer using LLM
+                eval_prompt = (
+                    f"Quiz Question: {q.get('question')}\n"
+                    f"Correct Answer: {correct_answer}\n"
+                    f"Student Answer: {transcript}\n\n"
+                    f"Evaluate the student's answer. State clearly if they are correct, partially correct, or incorrect, "
+                    f"and provide a very brief 1-2 sentence explanation of the reasoning."
+                )
+                evaluation_text = self.tutor_agent.execute(eval_prompt)
+                
+                # Update score if correct
+                is_correct = "correct" in evaluation_text.lower() and "incorrect" not in evaluation_text.lower()
+                if is_correct:
+                    self.active_revision_context["score"] += 1
+                
+                # Advance to next question
+                next_idx = idx + 1
+                self.active_revision_context["current_index"] = next_idx
+                
+                if next_idx < len(questions):
+                    next_q = questions[next_idx]
+                    next_options = next_q.get("options", [])
+                    next_options_str = f" Options: {', '.join(next_options)}" if next_options else ""
+                    response_text = (
+                        f"{evaluation_text}\n\n"
+                        f"Moving to Question {next_idx + 1}: {next_q.get('question')}{next_options_str}"
+                    )
+                    action = AgentAction(action="none")
+                else:
+                    score = self.active_revision_context["score"]
+                    total = len(questions)
+                    response_text = (
+                        f"{evaluation_text}\n\n"
+                        f"Interactive voice quiz complete! You scored {score} out of {total}. "
+                        f"Great work reinforcing your knowledge!"
+                    )
+                    self.active_revision_context["mode"] = "idle"
+                    action = tool_registry.execute_tool("navigate", target="revision")
+                
+                self._log_command(user_id, transcript, "QUIZ_ANSWER", response_text, "quiz")
+                return "QUIZ_ANSWER", response_text, action
 
         # ─── Stage 1: Intent Classification ───
         intent_data = self.intent_agent.classify(transcript)
@@ -207,21 +266,54 @@ class DistributedOrchestrator:
 
         elif intent == "QUIZ_REQUEST":
             agent_executed = "quiz"
-            topic = entities.get("topic", "General")
-            self.active_workflow = "revision"
-            # Generate quiz questions via agent if transcript available
-            compiled = " ".join(self.active_transcript)
-            if compiled and len(compiled.strip()) > 30:
-                try:
-                    quiz_result = self.quiz_agent.generate_quiz(topic, compiled)
-                    if quiz_result:
-                        event_bus.publish("quiz_generated", {"topic": topic, "questions": quiz_result})
-                except Exception as e:
-                    print(f"[Orchestrator] Quiz generation failed: {e}")
+            topic = entities.get("topic") or "General"
+            if topic == "General" and transcript:
+                # Try to extract topic from transcript
+                for phrase in ("on ", "about ", "for "):
+                    if phrase in transcript.lower():
+                        parts = transcript.lower().split(phrase, 1)
+                        if len(parts) > 1:
+                            topic = parts[1].strip().rstrip(".!?")[:60].title()
+                            break
+
+            quiz_result = []
+            db = SessionLocal()
+            try:
+                from backend.services.revision_content_service import generate_quiz_for_topic
+                quiz_result = generate_quiz_for_topic(
+                    topic=topic, db=db, count=10, force_regenerate=True
+                )
+            except Exception as e:
+                print(f"[Orchestrator] Quiz generation via revision service failed: {e}")
+            finally:
+                db.close()
+
+            if quiz_result:
+                event_bus.publish("quiz_generated", {"topic": topic, "questions": quiz_result, "count": len(quiz_result)})
+
+                is_interactive = any(x in transcript.lower() for x in ["interactive", "voice", "talk to me", "quiz me"])
+                if is_interactive:
+                    self.active_revision_context = {
+                        "mode": "interactive_quiz",
+                        "questions": quiz_result,
+                        "current_index": 0,
+                        "topic": topic,
+                        "score": 0
+                    }
+                    q0 = quiz_result[0]
+                    opts = q0.get("options", [])
+                    opts_str = f" Options: {', '.join(opts)}" if opts else ""
+                    response_text = f"Starting interactive quiz on {topic}! Question 1: {q0.get('question')}{opts_str}"
+                    action = AgentAction(action="none")
+                else:
+                    response_text = f"I've generated {len(quiz_result)} quiz questions on {topic} from your lecture materials."
+                    self.active_workflow = "revision"
+                    action = tool_registry.execute_tool("open_quiz", topic=topic)
             else:
                 event_bus.publish("quiz_generated", {"topic": topic})
-            response_text = f"Navigating to the revision center and opening your quiz session on {topic}."
-            action = tool_registry.execute_tool("open_quiz", topic=topic)
+                response_text = f"Generating quiz on {topic} — opening Revision Center."
+                self.active_workflow = "revision"
+                action = tool_registry.execute_tool("open_quiz", topic=topic)
 
         elif intent in ("REVISION_START", "WEAK_AREAS_QUERY"):
             agent_executed = "navigation"

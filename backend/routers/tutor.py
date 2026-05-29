@@ -31,18 +31,16 @@ def _log(stage: str, msg: str, **kwargs):
 # ─── Fallback LLM chain ───
 
 def _try_lyzr_tutor(message: str, context: Dict[str, Any]) -> Optional[str]:
-    """Attempt 1: Lyzr Studio tutor agent."""
+    """Attempt 1: Lyzr Studio tutor agent — teaches any study topic from LLM knowledge."""
     try:
-        from backend.services.lyzr_service import adaptive_tutor_agent
-        if not adaptive_tutor_agent.configured:
-            _log("Lyzr", "Agent not configured — skipping")
-            return None
-        _log("Lyzr", "Executing tutor agent", message_len=len(message))
-        result = adaptive_tutor_agent.execute(message, context)
-        if result and "error" not in result.lower()[:50]:
-            _log("Lyzr", "Success", response_len=len(result))
-            return result
-        _log("Lyzr", f"Agent returned error-like response: {result[:100]}")
+        from backend.services.llm_study_service import explain_study_topic
+        _log("Lyzr", "Executing LLM-first tutor", message_len=len(message))
+        result = explain_study_topic(message, context)
+        if result and len(result.strip()) > 20:
+            if not result.strip().lower().startswith('{"error"'):
+                _log("Lyzr", "Success", response_len=len(result))
+                return result
+        _log("Lyzr", f"Empty or error response: {(result or '')[:100]}")
         return None
     except Exception as e:
         _log("Lyzr", f"Failed: {e}")
@@ -98,6 +96,23 @@ def _try_groq_tutor(message: str, context: Dict[str, Any]) -> Optional[str]:
         return None
 
 
+def _try_agent_tutor(message: str, context: Dict[str, Any]) -> Optional[str]:
+    """Attempt: agent_service TutorAgent via injected LLM."""
+    try:
+        from agent_service.providers.agent_provider_factory import get_agent_llm
+        from agent_service.agents.tutor_agent import TutorAgent
+
+        agent = TutorAgent(get_agent_llm("tutor"))
+        result = agent.execute(message, context)
+        if result and len(result.strip()) > 30 and "[Adaptive Tutor Agent] LLM execution failed" not in result:
+            _log("AgentTutor", "Success", response_len=len(result))
+            return result
+        return None
+    except Exception as e:
+        _log("AgentTutor", f"Failed: {e}")
+        return None
+
+
 def _try_lyzr_direct_chat(message: str) -> Optional[str]:
     """Attempt 3: Direct Lyzr chat API (simplified, no context)."""
     try:
@@ -117,40 +132,22 @@ def _try_lyzr_direct_chat(message: str) -> Optional[str]:
 
 
 def _heuristic_response(message: str) -> str:
-    """Attempt 4: Heuristic fallback — no LLM needed."""
+    """Last-resort fallback when all LLM providers are unavailable."""
     msg_lower = message.lower().strip()
 
-    # Greetings
     greetings = ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "how are you"]
     for g in greetings:
         if msg_lower.startswith(g):
             return (
-                "Hello! 👋 I'm your NeuroLearn Adaptive Tutor. I'm here to help you understand "
-                "any academic concept — from data structures to operating systems. "
+                "Hello! I'm your NeuroLearn Adaptive Tutor. I can explain any study topic — "
+                "from Agent AI to data structures, DBMS, or anything academic. "
                 "What would you like to learn about today?"
             )
 
-    # Educational questions
-    if any(kw in msg_lower for kw in ["explain", "what is", "define", "teach me", "how does", "why does"]):
-        topic = message.strip().rstrip("?").split()[-2:] if len(message.split()) > 2 else [message.strip()]
-        topic_str = " ".join(topic)
-        return (
-            f"Great question about {topic_str}! While my advanced AI tutoring engine is "
-            "temporarily connecting, here's what I recommend:\n\n"
-            f"1. **Start a lecture** on {topic_str} to build your knowledge base\n"
-            "2. **Generate flashcards** to reinforce key concepts\n"
-            "3. **Take a quiz** to test your understanding\n\n"
-            "The AI tutor will provide detailed explanations once the connection is restored. "
-            "In the meantime, try recording a lecture!"
-        )
-
     return (
-        "I received your message, but my AI tutoring engine is temporarily unavailable. "
-        "I'll be back online shortly! In the meantime, you can:\n\n"
-        "• Record a lecture to build your knowledge graph\n"
-        "• Review your flashcards in the Revision Center\n"
-        "• Check your learning analytics\n\n"
-        "Please try again in a moment."
+        "I'm having trouble reaching the AI tutoring engine right now. "
+        "Please ensure the backend is running and your Lyzr API keys are configured in `.env`, "
+        "then try again. I can teach any academic topic once connected."
     )
 
 
@@ -254,15 +251,25 @@ async def chat_with_tutor(req: TutorChatRequest, db: Session = Depends(get_db)):
         except Exception as e:
             _log("Profile", f"DB query failed: {e}")
 
-        # 2. Retrieve semantic context from Qdrant (non-blocking)
+        # 2. Optional local lecture context (enrichment only — not required)
         memories = _safe_search_memory(
             "tutoring_memory_collection", req.message, req.userId, limit=2
         )
+        local_context = ""
+        try:
+            from backend.services.revision_content_service import gather_lecture_context_for_topic
+            ctx = gather_lecture_context_for_topic(req.message, db)
+            if ctx.get("has_local_context"):
+                parts = [p for p in [ctx.get("notes"), ctx.get("summary")] if p]
+                local_context = "\n".join(parts)[:4000]
+        except Exception as e:
+            _log("Context", f"Optional lecture context skipped: {e}")
 
         context = {
             "userId": req.userId,
             "learningStyle": preferred_style,
             "relevantPastInteractions": memories,
+            "localLectureContext": local_context or None,
         }
 
         # 3. Build thinking steps
@@ -271,6 +278,10 @@ async def chat_with_tutor(req: TutorChatRequest, db: Session = Depends(get_db)):
             f"Retrieved {len(memories)} relevant past interactions from memory.",
             f"Adapting to learning style: '{preferred_style}'.",
         ]
+        if local_context:
+            thinking_steps.append("Found related local lecture notes to supplement the explanation.")
+        else:
+            thinking_steps.append("Teaching from expert knowledge (no local notes required).")
 
         # 4. Execute fallback chain
         response_text = None
@@ -288,14 +299,21 @@ async def chat_with_tutor(req: TutorChatRequest, db: Session = Depends(get_db)):
                 provider_used = "groq"
                 thinking_steps.append("Response generated via Groq LLM (direct).")
 
-        # Attempt 3: Lyzr Direct Chat (simplified)
+        # Attempt 3: agent_service TutorAgent (Lyzr/Groq via agent factory)
+        if not response_text:
+            response_text = _try_agent_tutor(req.message, context)
+            if response_text:
+                provider_used = "tutor-agent"
+                thinking_steps.append("Response generated via Tutor Agent LLM pipeline.")
+
+        # Attempt 4: Lyzr Direct Chat (simplified)
         if not response_text:
             response_text = _try_lyzr_direct_chat(req.message)
             if response_text:
                 provider_used = "lyzr-direct"
                 thinking_steps.append("Response generated via Lyzr direct chat API.")
 
-        # Attempt 4: Heuristic fallback
+        # Attempt 5: Heuristic fallback
         if not response_text:
             response_text = _heuristic_response(req.message)
             provider_used = "heuristic"

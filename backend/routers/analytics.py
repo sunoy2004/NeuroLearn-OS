@@ -68,13 +68,14 @@ async def save_and_process_lecture(request: LectureUploadRequest, db: Session = 
         if not request.transcript or len(request.transcript.strip()) < 10:
             raise HTTPException(status_code=400, detail="Transcript too short to process")
 
+        lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
+
         # Process the transcript using the unified intelligence pipeline
         processor = TranscriptProcessor()
         result = processor.process(
-            request.transcript, request.title, request.subject, request.language
+            request.transcript, request.title, request.subject, request.language,
+            user_id="demo-user", lecture_id=lecture_id
         )
-
-        lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
 
         db_lecture = DBLecture(
             id=lecture_id,
@@ -309,6 +310,58 @@ async def get_dashboard_metrics(db: Session = Depends(get_db)):
         all_lectures = db.query(DBLecture).all()
         today = datetime.utcnow()
 
+        # Compile weak topics dynamically based on quiz/flashcard performance
+        quiz_topic_stats = {}
+        try:
+            attempts = db.query(DBQuizAttempt).all()
+            for att in attempts:
+                if att.topic not in quiz_topic_stats:
+                    quiz_topic_stats[att.topic] = []
+                quiz_topic_stats[att.topic].append(1.0 if att.correct else 0.0)
+        except Exception:
+            pass
+
+        fc_topic_stats = {}
+        try:
+            fcs = db.query(DBFlashcard).all()
+            for fc in fcs:
+                if fc.topic not in fc_topic_stats:
+                    fc_topic_stats[fc.topic] = []
+                if fc.review_count > 0:
+                    fc_topic_stats[fc.topic].append(fc.success_rate)
+                elif fc.ease < 2.2:
+                    fc_topic_stats[fc.topic].append(0.3)
+        except Exception:
+            pass
+
+        weak_topics_enriched = []
+        all_detected_topics = set(list(quiz_topic_stats.keys()) + list(fc_topic_stats.keys()))
+        for t in all_detected_topics:
+            scores = quiz_topic_stats.get(t, []) + fc_topic_stats.get(t, [])
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                if avg_score < 0.65:
+                    confidence = min(0.95, 0.4 + len(scores) * 0.1)
+                    suggested = f"Re-read study notes and start a personalized 15-question quiz on {t}."
+                    if avg_score < 0.4:
+                        suggested = f"Ask the AI Tutor to teach you {t} step-by-step from first principles, then do flashcard reviews."
+                    weak_topics_enriched.append({
+                        "topic": t,
+                        "confidence": round(confidence, 2),
+                        "suggested_revision": suggested
+                    })
+
+        # Persist enriched weak topics to learning profile JSON
+        if p:
+            try:
+                lprof = json.loads(p.learning_profile_json or "{}")
+            except Exception:
+                lprof = {}
+            lprof["weak_topics_details"] = weak_topics_enriched
+            p.learning_profile_json = json.dumps(lprof)
+            db.add(p)
+            db.commit()
+
         # 2. Dynamic Weak Topics (Bottom 5 concepts by mastery)
         weak_list = []
         sorted_concepts = sorted(concepts_list, key=lambda c: c.mastery)
@@ -453,6 +506,7 @@ async def get_dashboard_metrics(db: Session = Depends(get_db)):
                 "insights": insights
             },
             "weakTopics": weak_list,
+            "weakTopicsEnriched": weak_topics_enriched,
             "retentionData": ret_list,
             "masteryData": mast_list,
             "lectures": lecture_list
