@@ -35,26 +35,20 @@ Copy values for:
 ### 0.4 SQLite on Render (demo note)
 Render free tier uses **ephemeral disk**. `neurolearn.db` resets on redeploy. Fine for hackathon demos; mention to judges if asked.
 
-### 0.5 Python version — **required** (fixes `lyzr` build failure)
+### 0.5 Python version — **required**
 
-Render’s **default is Python 3.14**, but the `lyzr` package only supports **Python &lt; 3.13**.
-
-You **must** use Python **3.12.8** via **one** of these (repo includes `.python-version`):
+Render’s default is **Python 3.14**. Pin **3.12.8** so dependency wheels (e.g. `sqlalchemy`, `qdrant-client`) resolve reliably.
 
 | Method | What to do |
 |--------|------------|
-| **A — Repo file** *(recommended)* | Commit `.python-version` in repo root (contains `3.12.8`) — already in this project |
-| **B — Render env var** | On **both** services, set `PYTHON_VERSION` = `3.12.8` (fully qualified, with patch) |
+| **A — Repo file** *(recommended)* | `.python-version` in repo root contains `3.12.8` |
+| **B — Render env var** | On **both** services: `PYTHON_VERSION` = `3.12.8` |
 
-After deploy starts, logs should show:
+Logs should show `Using Python version 3.12.8` — not `3.14.3`.
 
-```
-==> Using Python version 3.12.8 ...
-```
+> **Note:** Lyzr Studio is called via **HTTP** (`lyzr_client.py` / `httpx`), not the legacy PyPI package `lyzr` (which only supports Python &lt; 3.12 and is **not** in `requirements.txt`).
 
-**Not** `3.14.3`. If you still see 3.14, add `PYTHON_VERSION=3.12.8` in Render → Environment → **Manual Deploy**.
-
-> `runtime.txt` is **not** used by Render (Heroku-style). Use `.python-version` or `PYTHON_VERSION` instead.
+> `runtime.txt` is **not** used by Render. Use `.python-version` or `PYTHON_VERSION`.
 
 ---
 
@@ -401,7 +395,7 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 
 | Issue | Fix |
 |-------|-----|
-| Build fails: `No matching distribution found for lyzr` | Render used Python 3.14 — set `PYTHON_VERSION=3.12.8` on **both** services and redeploy; ensure `.python-version` is pushed to GitHub |
+| Build fails: `No matching distribution found for lyzr` | Pull latest `main` — the unused PyPI `lyzr` package was removed from `requirements.txt`. Redeploy both services. |
 | Logs show `Python version 3.14` | Add env `PYTHON_VERSION` = `3.12.8` or push `.python-version` |
 | UI calls `localhost` | Set `VITE_*` on Netlify and **redeploy** |
 | Voice WebSocket fails | Use `wss://` in `VITE_AGENT_WS_BASE`; allow mic in Chrome |
@@ -418,7 +412,7 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 |------|---------|
 | `render.yaml` | Render Blueprint — 2 Python services |
 | `netlify.toml` | Netlify build + SPA fallback |
-| `.python-version` | Pins Python **3.12.8** for Render (required for `lyzr`) |
+| `.python-version` | Pins Python **3.12.8** for Render |
 | `runtime.txt` | Legacy/heroku-style pin (Render ignores this) |
 | `src/services/api.ts` | `VITE_*` URL resolution + WebSocket helpers |
 | `.env.example` | Documents local + production vars |
