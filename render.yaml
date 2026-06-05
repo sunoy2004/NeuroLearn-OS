@@ -1,6 +1,7 @@
-# NeuroLearn OS — Render Blueprint (2 Python web services)
+# NeuroLearn OS — Render Blueprint (2 Python web services + 1 static frontend)
 # Deploy: Render Dashboard → New → Blueprint → connect this repo
 # Set secret env vars in the Render dashboard after the blueprint is created.
+# VITE_* URLs assume service names neurolearn-api / neurolearn-agent — update if Render assigns different URLs.
 
 services:
   - type: web
@@ -96,3 +97,22 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+
+  - type: web
+    name: neurolearn-web
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: VITE_API_BASE
+        value: https://neurolearn-api.onrender.com
+      - key: VITE_AGENT_API_BASE
+        value: https://neurolearn-agent.onrender.com
+      - key: VITE_AGENT_WS_BASE
+        value: wss://neurolearn-agent.onrender.com

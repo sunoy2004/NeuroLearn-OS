@@ -1,14 +1,30 @@
-# NeuroLearn OS — Deploy Guide (Render + Netlify)
+# NeuroLearn OS — Deploy Guide (Render — all services)
 
-Host the full hackathon stack:
+Host the full hackathon stack on **Render only**:
 
 | Component | Platform | URL example |
 |-----------|----------|-------------|
-| **Frontend** (React/Vite) | Netlify | `https://neurolearn.netlify.app` |
-| **Backend API** (FastAPI :8000) | Render | `https://neurolearn-api.onrender.com` |
-| **Agent Service** (WebSocket voice) | Render | `https://neurolearn-agent.onrender.com` |
+| **Frontend** (React/Vite) | Render Static Site | `https://neurolearn-web.onrender.com` |
+| **Backend API** (FastAPI) | Render Web Service | `https://neurolearn-api.onrender.com` |
+| **Agent Service** (WebSocket voice) | Render Web Service | `https://neurolearn-agent.onrender.com` |
 | **Qdrant** | Qdrant Cloud | `https://xxxx.cloud.qdrant.io` |
-| **Lyzr + Deepgram** | Already SaaS | via env vars |
+| **Lyzr + Deepgram** | SaaS | via env vars |
+
+---
+
+## Quick start (ordered steps)
+
+1. **Push** latest `main` to GitHub (includes `.python-version`, `.node-version`, `render.yaml`).
+2. **Qdrant Cloud** — create cluster; save URL + API key.
+3. **Render → Blueprint** (or create 3 services manually):
+   - `neurolearn-api` — Python web service
+   - `neurolearn-agent` — Python web service
+   - `neurolearn-web` — Static site
+4. On **both Python services**, paste all backend secrets from your local `.env` (Qdrant, Lyzr IDs, Deepgram).
+5. On **neurolearn-web**, set `VITE_API_BASE`, `VITE_AGENT_API_BASE`, `VITE_AGENT_WS_BASE` to your real Render URLs.
+6. On **neurolearn-web**, add SPA rewrite: `/*` → `/index.html` (Rewrite) — included if using Blueprint.
+7. **Deploy** all three; wake backends with health curls before demo.
+8. Open `https://neurolearn-web.onrender.com` — Network tab must show `*.onrender.com`, not `localhost`.
 
 ---
 
@@ -19,8 +35,7 @@ Host the full hackathon stack:
 - **Never commit** `.env`, `*.db`, or API keys (see `.gitignore`).
 
 ### 0.2 Cloud accounts (free tiers)
-- [Render](https://render.com) — 2 web services (backend + agent)
-- [Netlify](https://netlify.com) — frontend
+- [Render](https://render.com) — 3 services (2 Python web + 1 static frontend)
 - [Qdrant Cloud](https://cloud.qdrant.io) — vector memory
 - [Lyzr Studio](https://studio.lyzr.ai) — agents (already configured locally)
 - [Deepgram](https://console.deepgram.com) — voice STT (`OMI_DEEPGRAM_API_KEY`)
@@ -68,22 +83,24 @@ No Docker needed in production.
 
 ---
 
-## Render quick reference — both services
+## Render quick reference — all three services
 
-| Render form field | Service 1: `neurolearn-api` | Service 2: `neurolearn-agent` |
-|-------------------|----------------------------|--------------------------------|
-| **Source Code** | `sunoy2004 / NeuroLearn-OS` | `sunoy2004 / NeuroLearn-OS` |
-| **Name** | `neurolearn-api` | `neurolearn-agent` |
-| **Project** | `NeuroLearn` / `Production` *(optional)* | Same |
-| **Language** | Python 3 | Python 3 |
-| **Branch** | `main` | `main` |
-| **Region** | Oregon (US West) | Oregon (US West) |
-| **Root Directory** | *(empty)* | *(empty)* |
-| **Build Command** | `pip install -r backend/requirements.txt -r agent_service/requirements.txt` | Same |
-| **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` |
-| **Instance Type** | Free | Free |
-| **Health Check Path** *(Settings)* | `/api/stack/health` | `/agents/health` |
-| **Environment Variables** | Full list below | **Identical** to Service 1 |
+| Render form field | `neurolearn-api` | `neurolearn-agent` | `neurolearn-web` |
+|-------------------|------------------|--------------------|------------------|
+| **Source Code** | `sunoy2004 / NeuroLearn-OS` | Same | Same |
+| **Name** | `neurolearn-api` | `neurolearn-agent` | `neurolearn-web` |
+| **Type** | Web Service | Web Service | **Static Site** |
+| **Language / Runtime** | Python 3 | Python 3 | Static |
+| **Branch** | `main` | `main` | `main` |
+| **Region** | Oregon (US West) | Oregon (US West) | Oregon (US West) |
+| **Root Directory** | *(empty)* | *(empty)* | *(empty)* |
+| **Build Command** | `pip install -r backend/requirements.txt -r agent_service/requirements.txt` | Same | `npm ci && npm run build` |
+| **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` | *(none — static)* |
+| **Publish Directory** | — | — | `dist` |
+| **Instance Type** | Free | Free | Free |
+| **Health Check Path** *(Settings)* | `/api/stack/health` | `/agents/health` | — |
+| **SPA rewrite** *(Redirects)* | — | — | `/*` → `/index.html` (Rewrite) |
+| **Environment Variables** | Backend secrets (below) | **Identical** to API | `VITE_*` only (below) |
 
 ---
 
@@ -240,7 +257,7 @@ Click **Create Web Service** → copy URL:
 https://neurolearn-agent.onrender.com
 ```
 
-WebSocket URL for the browser (used by Netlify frontend):
+WebSocket URL for the browser (used by the Render frontend):
 
 ```
 wss://neurolearn-agent.onrender.com/ws/agent-stream
@@ -254,42 +271,72 @@ curl https://neurolearn-agent.onrender.com/agents/health
 
 ---
 
-## Part 2B — Alternative: Render Blueprint (both services at once)
+## Part 2B — Alternative: Render Blueprint (all 3 services at once)
 
-If you prefer not to fill the form twice:
+If you prefer not to fill forms manually:
 
 1. Dashboard → **New +** → **Blueprint**.
 2. Connect `sunoy2004 / NeuroLearn-OS`.
-3. Render reads `render.yaml` and creates **neurolearn-api** + **neurolearn-agent** with the same build/start commands above.
-4. After creation, open each service → **Environment** → add the secret keys from the tables in Part 2 & 3.
+3. Render reads `render.yaml` and creates **neurolearn-api**, **neurolearn-agent**, and **neurolearn-web**.
+4. After creation, open each **Python** service → **Environment** → add secret keys from Part 2 & 3.
+5. Open **neurolearn-web** → confirm `VITE_*` URLs match your actual API/agent URLs → **Manual Deploy** if you changed them.
 
 ---
 
-## Part 4 — Netlify: Frontend
+## Part 4 — Render: Frontend (`neurolearn-web`)
 
-1. [app.netlify.com](https://app.netlify.com) → **Add new site** → **Import from Git**.
-2. Select your repo.
-3. Netlify reads `netlify.toml` automatically:
+Create this **after** both Python services are live (so you know their URLs). Dashboard → **New +** → **Static Site**.
 
-| Setting | Value |
-|---------|--------|
-| Build command | `npm ci && npm run build` |
-| Publish directory | `dist` |
-| Node version | 20 |
+### Source & project
 
-4. **Site configuration → Environment variables** (Production):
+| Render form field | What to enter |
+|-------------------|---------------|
+| **Source Code** | `sunoy2004 / NeuroLearn-OS` |
+| **Name** | `neurolearn-web` |
+| **Branch** | `main` |
+| **Root Directory** | *(leave empty)* |
 
-```env
-VITE_API_BASE=https://neurolearn-api.onrender.com
-VITE_AGENT_API_BASE=https://neurolearn-agent.onrender.com
-VITE_AGENT_WS_BASE=wss://neurolearn-agent.onrender.com
+### Build settings
+
+| Render form field | What to enter |
+|-------------------|---------------|
+| **Build Command** | `npm ci && npm run build` |
+| **Publish Directory** | `dist` |
+
+### Environment variables — Static Site
+
+`VITE_*` values are **baked into the JS bundle at build time**. Set them **before** the first deploy (or redeploy after any change).
+
+| Key | Value |
+|-----|--------|
+| `NODE_VERSION` | `20` |
+| `VITE_API_BASE` | `https://neurolearn-api.onrender.com` |
+| `VITE_AGENT_API_BASE` | `https://neurolearn-agent.onrender.com` |
+| `VITE_AGENT_WS_BASE` | `wss://neurolearn-agent.onrender.com` |
+
+Replace with your **actual** Render service URLs (**no trailing slash**). If Render assigned different hostnames, copy them from each service’s **Settings** tab.
+
+### SPA routing (required)
+
+After the site is created, go to **Redirects/Rewrites** and add:
+
+| Source | Destination | Action |
+|--------|-------------|--------|
+| `/*` | `/index.html` | **Rewrite** |
+
+Without this, refreshing on `/revision` or `/analytics` returns 404.
+
+> If you deploy via **Blueprint**, this rewrite is already in `render.yaml`.
+
+### Deploy
+
+Click **Create Static Site** → copy URL:
+
+```
+https://neurolearn-web.onrender.com
 ```
 
-Replace with your actual Render URLs (**no trailing slash**).
-
-5. **Deploy site** → copy URL: `https://your-site.netlify.app`
-
-6. **Trigger redeploy** after changing any `VITE_*` variable (they are baked in at build time).
+**Redeploy** the static site whenever you change any `VITE_*` variable.
 
 ---
 
@@ -308,7 +355,7 @@ First request after sleep may take **30–60 seconds**.
 
 ### 5.2 Browser checks
 
-1. Open your Netlify URL in **Chrome** (voice works best).
+1. Open your Render frontend URL (`https://neurolearn-web.onrender.com`) in **Chrome** (voice works best).
 2. DevTools → **Network** — API calls must go to `*.onrender.com`, **not** `localhost`.
 3. Allow microphone when prompted.
 4. Try: *"Generate a quiz on operating systems"*
@@ -382,12 +429,12 @@ DEEPGRAM_API_KEY=your-deepgram-key
 
 | | Local | Production |
 |---|--------|------------|
-| Frontend | `npm run dev` → `:5173` | Netlify |
+| Frontend | `npm run dev` → `:5173` | Render Static Site `neurolearn-web` |
 | API | `python -m backend.main` → `:8000` | Render `neurolearn-api` |
 | Agent | `python -m agent_service.main` → `:8001` | Render `neurolearn-agent` |
 | Qdrant | `docker compose up -d` | Qdrant Cloud |
 
-Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
+Local `.env` is unchanged. Production uses Render env UIs only (`VITE_*` on the static site).
 
 ---
 
@@ -397,12 +444,13 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 |-------|-----|
 | Build fails: `No matching distribution found for lyzr` | Pull latest `main` — the unused PyPI `lyzr` package was removed from `requirements.txt`. Redeploy both services. |
 | Logs show `Python version 3.14` | Add env `PYTHON_VERSION` = `3.12.8` or push `.python-version` |
-| UI calls `localhost` | Set `VITE_*` on Netlify and **redeploy** |
+| UI calls `localhost` | Set `VITE_*` on **neurolearn-web** and **redeploy** the static site |
+| 404 on page refresh | Add SPA rewrite `/*` → `/index.html` on the static site |
 | Voice WebSocket fails | Use `wss://` in `VITE_AGENT_WS_BASE`; allow mic in Chrome |
 | 502 / slow first load | Render cold start — hit health URLs 1–2 min before demo |
-| Qdrant connection error | Check `QDRANT_URL` + `QDRANT_API_KEY` on **both** Render services |
+| Qdrant connection error | Check `QDRANT_URL` + `QDRANT_API_KEY` on **both** Python services |
 | Agent disabled in health | Set missing `*_AGENT_LYZR_ID` in Render env |
-| CORS errors | Backends default to `CORS_ORIGINS=["*"]` — should work with Netlify |
+| CORS errors | Backends default to `CORS_ORIGINS=["*"]` — works with any Render frontend URL |
 
 ---
 
@@ -410,9 +458,9 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 
 | File | Purpose |
 |------|---------|
-| `render.yaml` | Render Blueprint — 2 Python services |
-| `netlify.toml` | Netlify build + SPA fallback |
-| `.python-version` | Pins Python **3.12.8** for Render |
+| `render.yaml` | Render Blueprint — 2 Python services + 1 static frontend |
+| `.python-version` | Pins Python **3.12.8** for backend services |
+| `.node-version` | Pins Node **20** for frontend static site |
 | `runtime.txt` | Legacy/heroku-style pin (Render ignores this) |
 | `src/services/api.ts` | `VITE_*` URL resolution + WebSocket helpers |
 | `.env.example` | Documents local + production vars |

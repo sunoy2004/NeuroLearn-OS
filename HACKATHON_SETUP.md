@@ -191,18 +191,18 @@ Then route everything through one manager agent ID.
 - Docker (Qdrant)
 - 3 terminals: backend, agent_service, npm run dev
 
-### Cloud deploy (Render + Netlify)
+### Cloud deploy (Render — all 3 services)
 
 **Full step-by-step guide:** [DEPLOY.md](./DEPLOY.md)
 
 | Component | Platform |
 |-----------|----------|
-| Frontend | Netlify |
-| Backend API + Agent Service | Render (2 web services) |
+| Frontend | Render Static Site (`neurolearn-web`) |
+| Backend API + Agent Service | Render (2 Python web services) |
 | Qdrant | Qdrant Cloud |
 | Lyzr + Deepgram | SaaS (env vars) |
 
-Netlify env vars:
+Render static site env vars (`neurolearn-web`):
 ```env
 VITE_API_BASE=https://neurolearn-api.onrender.com
 VITE_AGENT_API_BASE=https://neurolearn-agent.onrender.com
