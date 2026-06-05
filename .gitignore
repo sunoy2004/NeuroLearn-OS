@@ -27,3 +27,9 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Local SQLite databases — never commit
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
