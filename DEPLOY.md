@@ -35,6 +35,27 @@ Copy values for:
 ### 0.4 SQLite on Render (demo note)
 Render free tier uses **ephemeral disk**. `neurolearn.db` resets on redeploy. Fine for hackathon demos; mention to judges if asked.
 
+### 0.5 Python version — **required** (fixes `lyzr` build failure)
+
+Render’s **default is Python 3.14**, but the `lyzr` package only supports **Python &lt; 3.13**.
+
+You **must** use Python **3.12.8** via **one** of these (repo includes `.python-version`):
+
+| Method | What to do |
+|--------|------------|
+| **A — Repo file** *(recommended)* | Commit `.python-version` in repo root (contains `3.12.8`) — already in this project |
+| **B — Render env var** | On **both** services, set `PYTHON_VERSION` = `3.12.8` (fully qualified, with patch) |
+
+After deploy starts, logs should show:
+
+```
+==> Using Python version 3.12.8 ...
+```
+
+**Not** `3.14.3`. If you still see 3.14, add `PYTHON_VERSION=3.12.8` in Render → Environment → **Manual Deploy**.
+
+> `runtime.txt` is **not** used by Render (Heroku-style). Use `.python-version` or `PYTHON_VERSION` instead.
+
 ---
 
 ## Part 1 — Qdrant Cloud
@@ -53,33 +74,119 @@ No Docker needed in production.
 
 ---
 
-## Part 2 — Render: Backend API
+## Render quick reference — both services
 
-### Option A — Blueprint (recommended)
+| Render form field | Service 1: `neurolearn-api` | Service 2: `neurolearn-agent` |
+|-------------------|----------------------------|--------------------------------|
+| **Source Code** | `sunoy2004 / NeuroLearn-OS` | `sunoy2004 / NeuroLearn-OS` |
+| **Name** | `neurolearn-api` | `neurolearn-agent` |
+| **Project** | `NeuroLearn` / `Production` *(optional)* | Same |
+| **Language** | Python 3 | Python 3 |
+| **Branch** | `main` | `main` |
+| **Region** | Oregon (US West) | Oregon (US West) |
+| **Root Directory** | *(empty)* | *(empty)* |
+| **Build Command** | `pip install -r backend/requirements.txt -r agent_service/requirements.txt` | Same |
+| **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` |
+| **Instance Type** | Free | Free |
+| **Health Check Path** *(Settings)* | `/api/stack/health` | `/agents/health` |
+| **Environment Variables** | Full list below | **Identical** to Service 1 |
 
-1. Render Dashboard → **New +** → **Blueprint**.
-2. Connect your GitHub repo.
-3. Render reads `render.yaml` and creates **neurolearn-api** + **neurolearn-agent**.
-4. When prompted, fill in **secret** env vars (`sync: false` in blueprint).
+---
 
-### Option B — Manual web service
+## Part 2 — Render: Service 1 — Backend API (`neurolearn-api`)
 
-1. **New +** → **Web Service** → connect repo.
-2. Settings:
+Create this service **first**. Dashboard → **New +** → **Web Service**.
 
-| Field | Value |
-|-------|--------|
+### Source & project
+
+| Render form field | What to enter |
+|-------------------|---------------|
+| **Source Code** | `sunoy2004 / NeuroLearn-OS` (your GitHub repo) |
 | **Name** | `neurolearn-api` |
-| **Runtime** | Python 3 |
+| **Project** *(optional)* | Create e.g. `NeuroLearn` → Environment: `Production` |
+| **Language** | `Python 3` *(Render auto-detects Python)* |
+| **Branch** | `main` *(or your deploy branch)* |
+| **Region** | `Oregon (US West)` *(match your other Render services)* |
+| **Root Directory** | *(leave empty)* — repo root; both `backend/` and `agent_service/` must be available |
+
+### Build & run
+
+| Render form field | What to enter |
+|-------------------|---------------|
 | **Build Command** | `pip install -r backend/requirements.txt -r agent_service/requirements.txt` |
 | **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` |
+
+> **Important:** Use `$PORT` — Render injects the port. Do **not** use `8000`.
+
+### Instance type
+
+| Render form field | What to select |
+|-------------------|----------------|
+| **Instance Type** | **Free** — *For hobby projects* |
+
+*(Paid instances add persistent disk and zero-downtime; not required for hackathon.)*
+
+### Advanced settings (after service is created)
+
+Go to **Settings** → set:
+
+| Setting | Value |
+|---------|--------|
 | **Health Check Path** | `/api/stack/health` |
 
-3. **Environment** — add all backend secrets (see [Env var reference](#env-var-reference-both-render-services)).
+### Environment variables — Service 1
 
-4. Deploy → copy URL: `https://neurolearn-api.onrender.com`
+In the **Environment Variables** section on the create/deploy form (or **Environment** tab later), add:
 
-### Verify backend
+**Plain values (copy exactly):**
+
+| Key | Value |
+|-----|--------|
+| `PYTHON_VERSION` | `3.12.8` |
+| `DATABASE_URL` | `sqlite:///./neurolearn.db` |
+| `MEMORY_PROVIDER` | `qdrant` |
+| `VOICE_PROVIDER` | `omi` |
+| `LYZR_BASE_URL` | `https://agent-prod.studio.lyzr.ai` |
+| `ORCHESTRATOR_AGENT_PROVIDER` | `lyzr` |
+| `ORCHESTRATOR_AGENT_MODEL` | `gpt-4o-mini` |
+| `ORCHESTRATOR_AGENT_TEMPERATURE` | `0.2` |
+| `ORCHESTRATOR_AGENT_STREAMING` | `true` |
+| `TUTOR_AGENT_PROVIDER` | `lyzr` |
+| `LECTURE_AGENT_PROVIDER` | `lyzr` |
+| `NOTES_AGENT_PROVIDER` | `lyzr` |
+| `QUIZ_AGENT_PROVIDER` | `lyzr` |
+| `FLASHCARD_AGENT_PROVIDER` | `lyzr` |
+| `ANALYTICS_AGENT_PROVIDER` | `lyzr` |
+| `KNOWLEDGE_GRAPH_AGENT_PROVIDER` | `lyzr` |
+
+**Secrets (paste from your local `.env`):**
+
+| Key | Where to get it |
+|-----|-----------------|
+| `QDRANT_URL` | Qdrant Cloud cluster URL |
+| `QDRANT_API_KEY` | Qdrant Cloud API key |
+| `OMI_DEEPGRAM_API_KEY` | Deepgram console |
+| `ORCHESTRATOR_AGENT_API_KEY` | Lyzr Studio |
+| `ORCHESTRATOR_AGENT_LYZR_ID` | Lyzr Studio → Orchestrator agent |
+| `TUTOR_AGENT_LYZR_ID` | Lyzr Studio |
+| `LECTURE_AGENT_LYZR_ID` | Lyzr Studio |
+| `NOTES_AGENT_LYZR_ID` | Lyzr Studio |
+| `QUIZ_AGENT_LYZR_ID` | Lyzr Studio |
+| `FLASHCARD_AGENT_LYZR_ID` | Lyzr Studio |
+| `ANALYTICS_AGENT_LYZR_ID` | Lyzr Studio |
+| `KNOWLEDGE_GRAPH_AGENT_LYZR_ID` | Lyzr Studio |
+| `OPENAI_API_KEY` | *(optional)* OpenAI |
+| `DEEPGRAM_API_KEY` | *(optional)* fallback STT |
+
+You can reuse the same Lyzr API key for `ORCHESTRATOR_AGENT_API_KEY` and set `TUTOR_AGENT_API_KEY` etc. to the same value if your local `.env` does that.
+
+Click **Create Web Service** → wait for deploy → copy URL:
+
+```
+https://neurolearn-api.onrender.com
+```
+
+### Verify Service 1
 
 ```bash
 curl https://neurolearn-api.onrender.com/
@@ -90,37 +197,77 @@ Expect Qdrant, Lyzr, and Omi sections to show ready/active.
 
 ---
 
-## Part 3 — Render: Agent Service
+## Part 3 — Render: Service 2 — Agent Service (`neurolearn-agent`)
 
-If you used the blueprint, this service is created automatically. Otherwise:
+Create a **second** web service from the **same repo**. Dashboard → **New +** → **Web Service**.
 
-1. **New +** → **Web Service** (same repo).
-2. Settings:
+### Source & project
 
-| Field | Value |
-|-------|--------|
+| Render form field | What to enter |
+|-------------------|---------------|
+| **Source Code** | `sunoy2004 / NeuroLearn-OS` *(same repo)* |
 | **Name** | `neurolearn-agent` |
+| **Project** *(optional)* | Same project: `NeuroLearn` / `Production` |
+| **Language** | `Python 3` |
+| **Branch** | `main` *(same branch as Service 1)* |
+| **Region** | `Oregon (US West)` *(same region as Service 1)* |
+| **Root Directory** | *(leave empty)* |
+
+### Build & run
+
+| Render form field | What to enter |
+|-------------------|---------------|
 | **Build Command** | `pip install -r backend/requirements.txt -r agent_service/requirements.txt` |
 | **Start Command** | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` |
+
+> Same build command as Service 1 — the agent imports `backend` modules from the monorepo.
+
+### Instance type
+
+| Render form field | What to select |
+|-------------------|----------------|
+| **Instance Type** | **Free** — *For hobby projects* |
+
+### Advanced settings (after service is created)
+
+| Setting | Value |
+|---------|--------|
 | **Health Check Path** | `/agents/health` |
 
-3. **Same env vars** as backend (Lyzr, Qdrant, Deepgram, etc.).
+### Environment variables — Service 2
 
-4. Copy URL: `https://neurolearn-agent.onrender.com`
+Use the **same keys and values** as Service 1 ([plain values table](#environment-variables--service-1) + [secrets table](#secrets-paste-from-your-local-env)).
 
-> Render assigns `$PORT` dynamically — do **not** hardcode `8000` or `8001`.
+The agent service reads `agent_service/config.py` and also uses `backend.database` — it needs Qdrant, Lyzr, and Deepgram configured identically.
 
-### Verify agent
+Click **Create Web Service** → copy URL:
+
+```
+https://neurolearn-agent.onrender.com
+```
+
+WebSocket URL for the browser (used by Netlify frontend):
+
+```
+wss://neurolearn-agent.onrender.com/ws/agent-stream
+```
+
+### Verify Service 2
 
 ```bash
 curl https://neurolearn-agent.onrender.com/agents/health
 ```
 
-WebSocket endpoint (used by browser):
+---
 
-```
-wss://neurolearn-agent.onrender.com/ws/agent-stream
-```
+## Part 2B — Alternative: Render Blueprint (both services at once)
+
+If you prefer not to fill the form twice:
+
+1. Dashboard → **New +** → **Blueprint**.
+2. Connect `sunoy2004 / NeuroLearn-OS`.
+3. Render reads `render.yaml` and creates **neurolearn-api** + **neurolearn-agent** with the same build/start commands above.
+4. After creation, open each service → **Environment** → add the secret keys from the tables in Part 2 & 3.
 
 ---
 
@@ -182,9 +329,9 @@ First request after sleep may take **30–60 seconds**.
 
 ---
 
-## Env var reference (both Render services)
+## Env var reference (copy-paste block — both Render services)
 
-Set these on **neurolearn-api** and **neurolearn-agent**:
+Add every line below to **both** `neurolearn-api` and `neurolearn-agent` in Render → **Environment** (replace placeholder values with your real secrets):
 
 ```env
 # Database (demo)
@@ -254,6 +401,8 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 
 | Issue | Fix |
 |-------|-----|
+| Build fails: `No matching distribution found for lyzr` | Render used Python 3.14 — set `PYTHON_VERSION=3.12.8` on **both** services and redeploy; ensure `.python-version` is pushed to GitHub |
+| Logs show `Python version 3.14` | Add env `PYTHON_VERSION` = `3.12.8` or push `.python-version` |
 | UI calls `localhost` | Set `VITE_*` on Netlify and **redeploy** |
 | Voice WebSocket fails | Use `wss://` in `VITE_AGENT_WS_BASE`; allow mic in Chrome |
 | 502 / slow first load | Render cold start — hit health URLs 1–2 min before demo |
@@ -269,7 +418,8 @@ Local `.env` is unchanged. Production uses Render/Netlify env UIs only.
 |------|---------|
 | `render.yaml` | Render Blueprint — 2 Python services |
 | `netlify.toml` | Netlify build + SPA fallback |
-| `runtime.txt` | Python 3.12 for Render |
+| `.python-version` | Pins Python **3.12.8** for Render (required for `lyzr`) |
+| `runtime.txt` | Legacy/heroku-style pin (Render ignores this) |
 | `src/services/api.ts` | `VITE_*` URL resolution + WebSocket helpers |
 | `.env.example` | Documents local + production vars |
 

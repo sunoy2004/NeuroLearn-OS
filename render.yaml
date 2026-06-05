@@ -12,7 +12,7 @@ services:
     healthCheckPath: /api/stack/health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.8
+        value: "3.12.8"
       - key: DATABASE_URL
         value: sqlite:///./neurolearn.db
       - key: MEMORY_PROVIDER
@@ -59,7 +59,7 @@ services:
     healthCheckPath: /agents/health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.8
+        value: "3.12.8"
       - key: DATABASE_URL
         value: sqlite:///./neurolearn.db
       - key: MEMORY_PROVIDER
