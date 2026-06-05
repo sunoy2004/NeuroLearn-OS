@@ -27,7 +27,6 @@ import {
   BarChart3,
   Zap,
   Circle,
-  Volume2,
   Cpu,
   Settings,
   CheckCircle,
@@ -43,7 +42,6 @@ const navItems: { id: Page; label: string; icon: React.ElementType; badge?: stri
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "lecture-studio", label: "Lecture Studio", icon: Mic },
   { id: "tutor", label: "AI Tutor", icon: Brain },
-  { id: "voice", label: "Voice Control", icon: Volume2, badge: "New" },
   { id: "knowledge-graph", label: "Knowledge Graph", icon: Network },
   { id: "revision", label: "Revision Center", icon: BookOpen },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
@@ -116,26 +114,46 @@ function NeuroSidebar() {
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarGroupLabel className="text-[10px] uppercase tracking-widest text-muted-foreground/60">Agent Network</SidebarGroupLabel>
           <SidebarGroupContent>
-            <div className="px-2 space-y-2">
-              {agents.map((agent) => (
-                <div key={agent.id} className="flex items-center gap-2">
-                  <Circle
+            <div className="px-2 space-y-1.5">
+              {agents.map((agent) => {
+                const isWorking = agent.status === "active" || agent.status === "processing";
+                const justFinished = agent.status === "complete";
+                return (
+                  <div
+                    key={agent.id}
                     className={cn(
-                      "size-2 fill-current",
-                      (agent.status === "active" || agent.status === "processing") && "animate-pulse"
+                      "flex items-center gap-2 rounded-md px-1.5 py-1 transition-all duration-300",
+                      isWorking && "bg-primary/10 border border-primary/25 neuro-glow-sm",
+                      justFinished && "bg-[var(--neuro-cyan)]/8 border border-[var(--neuro-cyan)]/20"
                     )}
-                    style={{ color: getAgentStatusColor(agent.status) }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <span className="text-xs text-muted-foreground block truncate">{agent.name}</span>
-                    {agent.provider && (
-                      <span className="text-[9px] text-muted-foreground/60 truncate block">
-                        {agent.provider}/{agent.model?.split("-").slice(0, 2).join("-") || "—"}
+                  >
+                    <Circle
+                      className={cn(
+                        "size-2.5 shrink-0 fill-current",
+                        (isWorking || justFinished) && "animate-pulse"
+                      )}
+                      style={{ color: getAgentStatusColor(agent.status) }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span
+                        className={cn(
+                          "text-xs block truncate",
+                          isWorking ? "text-primary font-medium" : "text-muted-foreground"
+                        )}
+                      >
+                        {agent.name}
                       </span>
-                    )}
+                      {(isWorking || justFinished) && agent.task ? (
+                        <span className="text-[9px] text-primary/80 truncate block">{agent.task}</span>
+                      ) : agent.provider ? (
+                        <span className="text-[9px] text-muted-foreground/60 truncate block">
+                          {agent.provider}/{agent.model?.split("-").slice(0, 2).join("-") || "—"}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -164,7 +182,6 @@ const pageTitles: Record<Page, string> = {
   "dashboard": "Dashboard",
   "lecture-studio": "Lecture Studio",
   "tutor": "AI Tutor",
-  "voice": "Voice Control",
   "knowledge-graph": "Knowledge Graph",
   "revision": "Revision Center",
   "analytics": "Analytics",
@@ -272,9 +289,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider>
       <NeuroSidebar />
-      <SidebarInset className="neuro-grid-bg">
+      <SidebarInset className="neuro-grid-bg flex min-h-svh max-h-svh flex-col overflow-hidden">
         <TopBar page={currentPage} />
-        <main className="flex-1 overflow-auto">
+        <main className="flex flex-1 min-h-0 flex-col overflow-y-auto overflow-x-hidden">
           {children}
         </main>
       </SidebarInset>

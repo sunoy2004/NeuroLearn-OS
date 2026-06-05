@@ -3,6 +3,8 @@ import { useAppStore } from "@/store/appStore";
 import { AGENT_WS_BASE } from "@/services/api";
 import { createVoiceCommand } from "@/services/voiceIntentClassifier";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
+import { executeAction } from "@/actions/actionExecutor";
+import { routeIntent } from "@/services/intentRouter";
 import type { VoiceCommand, VoiceTranscript, VoiceIntent } from "@/types";
 import { getSpeechRecognitionLang } from "@/config/speechLanguages";
 
@@ -215,55 +217,24 @@ export function GlobalVoiceController() {
 
   const executeAgentAction = (action: any) => {
     console.log("Autonomous agent executing action:", action);
-    
-    switch (action.action) {
-      case "navigate":
-        if (action.target) {
-          setPage(action.target);
-          addAgentNotification(`Navigated to ${action.target}`, "success", "NavigationAgent");
-        }
-        break;
-      case "start_recording":
-        setPage("lecture-studio");
-        useAppStore.getState().setRecording(true);
-        addAgentNotification("Started lecture recording session", "success", "LectureAgent");
-        break;
-      case "stop_recording":
-        useAppStore.getState().setRecording(false);
-        addAgentNotification("Stopped lecture recording session", "success", "LectureAgent");
-        break;
-      case "open_quiz":
-        setPage("revision");
-        if (action.payload?.topic) {
-          useAppStore.getState().fetchQuizQuestions(action.payload.topic, {
-            count: 10,
-            forceRegenerate: true,
-          });
-          addAgentNotification(
-            `Generating ${10} quiz questions on ${action.payload.topic}`,
-            "success",
-            "QuizAgent"
-          );
-        }
-        break;
-      case "open_modal":
-        console.log(`Autonomous agent triggered modal: ${action.target}`);
-        addAgentNotification(`Opened modal interface: ${action.target}`, "success", "Orchestrator");
-        break;
-      case "display_summary":
-        console.log("Autonomous agent generated lecture summary:", action.payload);
-        addAgentNotification(`Generated lecture summary outline`, "success", "SummaryAgent");
-        break;
-      default:
-        break;
-    }
+    executeAction(action.action, action);
   };
 
   const routeVoiceAction = (intent: string, transcript: string) => {
     console.log(`Global router executing voice action for intent: ${intent}`);
+
+    if (intent === "QUIZ_REQUEST" || intent === "FLASHCARD_CREATE") {
+      routeIntent(transcript);
+      return;
+    }
     
     switch (intent) {
-      case "QUIZ_REQUEST":
+      case "GREETING":
+      case "GENERAL_CONVERSATION":
+      case "UNKNOWN":
+      case "REJECTED":
+        // Voice reply only — stay on current page
+        break;
       case "REVISION_START":
       case "WEAK_AREAS_QUERY":
         setPage("revision");

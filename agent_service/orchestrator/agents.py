@@ -8,6 +8,7 @@ Each specialist agent gets its own LLM instance via the AgentProviderFactory.
 """
 
 import json
+import re
 import time
 from typing import Dict, Any, Tuple
 
@@ -28,6 +29,35 @@ from agent_service.events.bus import event_bus
 from backend.database import SessionLocal, DBFlashcard, DBLecture, DBUserProfile
 from datetime import datetime
 import uuid
+
+
+def _extract_topic_from_transcript(transcript: str, entities: Dict[str, Any]) -> str:
+    """Pull the study topic from intent entities or spoken phrasing."""
+    topic = (entities.get("topic") or "").strip()
+    if topic and topic.lower() not in ("general", "general study", "general study material"):
+        return topic[:80]
+
+    patterns = [
+        r"(?:generate|create|make)\s+(?:a\s+)?(?:quiz|flashcards?)\s+(?:on|about|for)\s+(.+?)(?:\.|$|\?)",
+        r"(?:quiz|test|flashcards?)\s+(?:me\s+)?(?:on|about|for)\s+(.+?)(?:\.|$|\?)",
+        r"(?:take|start|begin)\s+(?:a\s+)?quiz\s+(?:on|about|for)\s+(.+?)(?:\.|$|\?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, transcript, re.I)
+        if match:
+            candidate = match.group(1).strip().rstrip(".!?")
+            if len(candidate) >= 2:
+                return candidate[:80]
+
+    lower = transcript.lower()
+    for phrase in (" on ", " about ", " for "):
+        if phrase in lower:
+            parts = lower.split(phrase, 1)
+            if len(parts) > 1:
+                candidate = parts[1].strip().rstrip(".!?")[:80]
+                if len(candidate) >= 2 and candidate not in ("me", "a", "the", "topic"):
+                    return candidate
+    return "General"
 
 
 class DistributedOrchestrator:
@@ -110,12 +140,23 @@ class DistributedOrchestrator:
         """
         # Instant greeting fallbacks to avoid LLM delays and misclassifications
         lower_msg = transcript.lower().strip()
-        if "good morning" in lower_msg:
-            response_text = "Good morning! Ready for another learning session? What topic would you like to explore today?"
-            self._log_command(user_id, transcript, "GREETING", response_text, "tutor")
-            return "GREETING", response_text, AgentAction(action="none")
-        elif any(x in lower_msg for x in ["hello", "hi", "hey"]):
-            response_text = "Hello! I'm your Neural Learn study companion. I can help explain concepts, generate quizzes, create revision notes, analyze lectures, and guide your learning. What would you like to study today?"
+        greeting_patterns = (
+            r"^(?:hello|hi|hey|hiya|howdy|greetings|yo|sup)(?:\s+there|\s+everyone|\s+again)?[!.,?\s]*$",
+            r"^good\s+(?:morning|afternoon|evening|day)[!.,?\s]*$",
+            r"^how\s+are\s+you(?:\s+doing)?[!.,?\s]*$",
+            r"^what(?:'s|\s+is)\s+up[!.,?\s]*$",
+        )
+        is_greeting = any(re.match(p, lower_msg) for p in greeting_patterns)
+        if is_greeting or any(
+            lower_msg == x or lower_msg.startswith(f"{x} ") or lower_msg.startswith(f"{x}!") or lower_msg.startswith(f"{x},")
+            for x in ("hello", "hi", "hey", "good morning", "good afternoon", "good evening")
+        ):
+            if "good morning" in lower_msg or "good afternoon" in lower_msg or "good evening" in lower_msg:
+                response_text = "Good day! Ready for another learning session? What topic would you like to explore today?"
+            elif "how are you" in lower_msg:
+                response_text = "I'm doing great and ready to help you learn! What would you like to study today?"
+            else:
+                response_text = "Hello! I'm your Neural Learn study companion. I can help explain concepts, generate quizzes, create revision notes, analyze lectures, and guide your learning. What would you like to study today?"
             self._log_command(user_id, transcript, "GREETING", response_text, "tutor")
             return "GREETING", response_text, AgentAction(action="none")
 
@@ -212,106 +253,64 @@ class DistributedOrchestrator:
 
         elif intent == "FLASHCARD_CREATE":
             agent_executed = "flashcard"
-            compiled_transcript = " ".join(self.active_transcript)
-            subject = entities.get("subject", "DBMS")
-            
-            # Fallback to recent database lecture notes if no active transcript
-            if not compiled_transcript or len(compiled_transcript.strip()) < 15:
-                db = SessionLocal()
-                try:
-                    recent_lec = db.query(DBLecture).order_by(DBLecture.date.desc()).first()
-                    if recent_lec and recent_lec.notes:
-                        compiled_transcript = recent_lec.notes
-                        subject = recent_lec.subject
-                        self.active_lecture_id = recent_lec.id
-                except Exception as e:
-                    print(f"Error querying recent lecture for flashcards: {e}")
-                finally:
-                    db.close()
-                    
-            if not compiled_transcript or len(compiled_transcript.strip()) < 15:
-                response_text = "I couldn't find an active lecture transcript or notes to generate flashcards from. Please start a lecture first."
+            topic = _extract_topic_from_transcript(transcript, entities)
+
+            if topic == "General":
+                response_text = "Please specify a topic, for example: generate flashcards on Operating Systems."
                 action = AgentAction(action="none")
             else:
-                cards = self.flashcard_agent.generate_cards(compiled_transcript, self.active_lecture_id)
-                if not cards:
-                    response_text = "I tried to generate flashcards, but no distinct academic concepts were extracted. Please try again with more detailed lecture content."
-                    action = AgentAction(action="none")
-                else:
-                    db = SessionLocal()
-                    try:
-                        for card in cards:
-                            db_fc = DBFlashcard(
-                                id=card["id"],
-                                front=card["front"],
-                                back=card["back"],
-                                topic=card["topic"],
-                                subject=subject,
-                                due_date=datetime.utcnow().strftime("%Y-%m-%d"),
-                                ease=2.5,
-                                interval=1
-                            )
-                            db.add(db_fc)
-                        db.commit()
-                        response_text = f"I've successfully generated {len(cards)} new spaced-repetition flashcards on {subject}. They are ready for you in the Revision Center."
-                        event_bus.publish("flashcards_generated", {"flashcards": cards, "subject": subject})
-                        self.active_workflow = "revision"
-                        action = tool_registry.execute_tool("navigate", target="revision")
-                    except Exception as e:
-                        db.rollback()
-                        response_text = f"An error occurred while saving the flashcards: {e}"
-                        action = AgentAction(action="none")
-                    finally:
-                        db.close()
+                response_text = f"Generating flashcards on {topic}. Opening Revision Center."
+                self.active_workflow = "revision"
+                action = tool_registry.execute_tool("open_flashcards", topic=topic)
 
         elif intent == "QUIZ_REQUEST":
             agent_executed = "quiz"
-            topic = entities.get("topic") or "General"
-            if topic == "General" and transcript:
-                # Try to extract topic from transcript
-                for phrase in ("on ", "about ", "for "):
-                    if phrase in transcript.lower():
-                        parts = transcript.lower().split(phrase, 1)
-                        if len(parts) > 1:
-                            topic = parts[1].strip().rstrip(".!?")[:60].title()
-                            break
+            topic = _extract_topic_from_transcript(transcript, entities)
+            is_interactive = any(
+                x in transcript.lower()
+                for x in ["interactive", "voice", "talk to me", "quiz me"]
+            )
 
-            quiz_result = []
-            db = SessionLocal()
-            try:
-                from backend.services.revision_content_service import generate_quiz_for_topic
-                quiz_result = generate_quiz_for_topic(
-                    topic=topic, db=db, count=10, force_regenerate=True
-                )
-            except Exception as e:
-                print(f"[Orchestrator] Quiz generation via revision service failed: {e}")
-            finally:
-                db.close()
+            if topic == "General" and not is_interactive:
+                response_text = "Please specify a topic, for example: generate a quiz on Machine Learning."
+                action = AgentAction(action="none")
+            elif is_interactive:
+                quiz_result = []
+                try:
+                    from backend.services.revision_content_service import generate_quiz_for_topic
+                    quiz_result = generate_quiz_for_topic(
+                        topic=topic if topic != "General" else "General Study",
+                        count=10,
+                        force_regenerate=True,
+                        use_lecture_context=False,
+                    )
+                except Exception as e:
+                    print(f"[Orchestrator] Interactive quiz generation failed: {e}")
 
-            if quiz_result:
-                event_bus.publish("quiz_generated", {"topic": topic, "questions": quiz_result, "count": len(quiz_result)})
-
-                is_interactive = any(x in transcript.lower() for x in ["interactive", "voice", "talk to me", "quiz me"])
-                if is_interactive:
+                if quiz_result:
+                    event_bus.publish(
+                        "quiz_generated",
+                        {"topic": topic, "questions": quiz_result, "count": len(quiz_result)},
+                    )
                     self.active_revision_context = {
                         "mode": "interactive_quiz",
                         "questions": quiz_result,
                         "current_index": 0,
                         "topic": topic,
-                        "score": 0
+                        "score": 0,
                     }
                     q0 = quiz_result[0]
                     opts = q0.get("options", [])
                     opts_str = f" Options: {', '.join(opts)}" if opts else ""
-                    response_text = f"Starting interactive quiz on {topic}! Question 1: {q0.get('question')}{opts_str}"
+                    response_text = (
+                        f"Starting interactive quiz on {topic}! Question 1: {q0.get('question')}{opts_str}"
+                    )
                     action = AgentAction(action="none")
                 else:
-                    response_text = f"I've generated {len(quiz_result)} quiz questions on {topic} from your lecture materials."
-                    self.active_workflow = "revision"
-                    action = tool_registry.execute_tool("open_quiz", topic=topic)
+                    response_text = f"I couldn't start an interactive quiz on {topic}. Try again with a clearer topic."
+                    action = AgentAction(action="none")
             else:
-                event_bus.publish("quiz_generated", {"topic": topic})
-                response_text = f"Generating quiz on {topic} — opening Revision Center."
+                response_text = f"Generating a quiz on {topic}. Opening Revision Center."
                 self.active_workflow = "revision"
                 action = tool_registry.execute_tool("open_quiz", topic=topic)
 
@@ -344,9 +343,8 @@ class DistributedOrchestrator:
 
         elif intent in ("TUTORING_REQUEST", "EXPLANATION_REQUEST"):
             agent_executed = "tutor"
-            self.active_workflow = "tutor"
             response_text = self.tutor_agent.explain(transcript, context)
-            action = tool_registry.execute_tool("navigate", target="tutor")
+            action = AgentAction(action="none")
 
         elif intent == "GREETING":
             agent_executed = "tutor"
@@ -355,9 +353,8 @@ class DistributedOrchestrator:
 
         elif intent == "EDUCATIONAL_QUESTION":
             agent_executed = "tutor"
-            self.active_workflow = "tutor"
             response_text = self.tutor_agent.teach(transcript, context)
-            action = tool_registry.execute_tool("navigate", target="tutor")
+            action = AgentAction(action="none")
 
         elif intent == "GENERAL_CONVERSATION":
             agent_executed = "tutor"

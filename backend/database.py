@@ -1,16 +1,50 @@
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, Boolean
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import NullPool, QueuePool
 from backend.config import settings
 
-engine = create_engine(
-    settings.DATABASE_URL, 
-    connect_args={"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
-)
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
+if _is_sqlite:
+    # SQLite: avoid QueuePool exhaustion — fresh connection per checkout, closed on return
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args={"check_same_thread": False, "timeout": 60},
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
+else:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=60,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+@contextmanager
+def session_scope():
+    """Short-lived session for background/long-running work."""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
 
 def get_db():
     db = SessionLocal()
@@ -188,6 +222,23 @@ class DBQuizAttempt(Base):
     correct = Column(Boolean, default=False)
     score = Column(Float, default=0.0)
     attempted_at = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBSavedQuiz(Base):
+    __tablename__ = "saved_quizzes"
+
+    id = Column(String, primary_key=True, index=True)
+    topic = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    questions_json = Column(Text, nullable=False)
+    last_score = Column(Integer, default=0)
+    best_score = Column(Integer, default=0)
+    total_questions = Column(Integer, default=0)
+    last_accuracy = Column(Float, default=0.0)
+    attempt_count = Column(Integer, default=1)
+    analysis_json = Column(Text, default="{}")
+    saved_at = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
 
 def init_db():
     Base.metadata.create_all(bind=engine)

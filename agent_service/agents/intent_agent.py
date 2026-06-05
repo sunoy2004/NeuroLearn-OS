@@ -33,6 +33,9 @@ Rules:
 - Navigation requests like "go to dashboard" or "open analytics" should use NAVIGATE_* intents
 - "Explain X" or "What is X" should be EXPLANATION_REQUEST or TUTORING_REQUEST
 - "Quiz me on X" or "Test me" should be QUIZ_REQUEST
+- "Generate flashcards on X" or "Create flashcards about X" should be FLASHCARD_CREATE with entities.topic = X
+- "Generate quiz on X" or "Create a quiz about X" should be QUIZ_REQUEST with entities.topic = X
+- For quiz/flashcard requests, always extract the topic into entities.topic when the user names one
 - Greetings like "hello", "hi", "good morning", "how are you" should be GREETING with high confidence
 - Educational questions like "teach me about X", "what is recursion" should be EDUCATIONAL_QUESTION
 - General conversation like "thank you", "what can you do" should be GENERAL_CONVERSATION

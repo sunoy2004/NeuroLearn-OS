@@ -7,6 +7,7 @@ import { sessionLifecycleManager } from "./sessionLifecycleManager";
 import { agentRegistry } from "@/agents/agentRegistry";
 import { agentBootstrap } from "@/agents/bootstrap";
 import { routeIntent } from "@/services/intentRouter";
+import { isGreetingTranscript } from "@/services/conversationIntentClassifier";
 
 export type ConnectionStatus = "connected" | "disconnected" | "connecting";
 export type VoiceStatus = "idle" | "listening" | "thinking" | "responding" | "executing" | "stopped" | "disconnected";
@@ -228,6 +229,11 @@ export class PersistentVoiceSessionManager {
             this.setVoiceStatus("responding");
             this.currentResponseStream = "";
             this.streamListeners.forEach((cb) => cb(""));
+            const specialistId = agentRegistry.resolveAgentId(data.intent || data.agentExecuted || "");
+            if (specialistId !== "orchestrator") {
+              const label = (data.intent || "task").replace(/_/g, " ").toLowerCase();
+              agentRegistry.processing(specialistId, `Running ${label}...`, 68);
+            }
           } 
           
           else if (data.event === "stream_chunk") {
@@ -248,18 +254,15 @@ export class PersistentVoiceSessionManager {
             }
 
             this.setVoiceStatus("idle");
-            agentRegistry.complete(
-              agentRegistry.resolveAgentId(data.agentExecuted || "orchestrator"),
-              "Command processed"
-            );
-            
+            this.applyAgentStatusFromResult(data);
+
             const msg: SessionMessage = {
               id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
               role: "assistant",
               content: data.response,
               timestamp: Date.now(),
               intent: data.intent,
-              agentName: data.agentExecuted
+              agentName: data.intent || data.agentExecuted
             };
 
             this.messageListeners.forEach((cb) => cb(msg));
@@ -312,21 +315,43 @@ export class PersistentVoiceSessionManager {
             }
 
             // Execute client-side action if returned
-            if (data.action && data.action.action !== "none") {
+            const transcriptText = data.transcript || "";
+            const isCasualGreeting = isGreetingTranscript(transcriptText);
+            const shouldSkipNavigation =
+              isCasualGreeting &&
+              (data.action?.action === "navigate" || data.intent === "GREETING" || data.intent === "GENERAL_CONVERSATION");
+
+            if (data.action && data.action.action !== "none" && !shouldSkipNavigation) {
               const lectureAction = ["start_recording", "stop_recording"].includes(data.action.action);
               if (lectureAction) {
                 this.prepareForLectureRecording();
               }
               this.setVoiceStatus("executing");
-              this.executeAction(data.action);
+              this.executeAction({ ...data.action, transcript: transcriptText });
               setTimeout(() => {
                 if (this.voiceStatus === "executing") {
                   this.setVoiceStatus("idle");
                 }
               }, 1500);
             } else if (data.intent) {
-              // Fallback to local routing if server processed intent but didn't emit a direct action
-              routeIntent(data.transcript || "");
+              // Only route when intent implies navigation — never on greetings or casual chat
+              const stayInPlace = new Set([
+                "GREETING",
+                "GENERAL_CONVERSATION",
+                "UNKNOWN",
+                "REJECTED",
+                "QUIZ_ANSWER",
+                "EDUCATIONAL_QUESTION",
+                "TUTORING_REQUEST",
+                "EXPLANATION_REQUEST",
+              ]);
+              const generationIntents = new Set(["QUIZ_REQUEST", "FLASHCARD_CREATE"]);
+              if (
+                (!stayInPlace.has(data.intent) && !isCasualGreeting) ||
+                generationIntents.has(data.intent)
+              ) {
+                routeIntent(transcriptText);
+              }
             }
           }
         } catch (err) {
@@ -715,8 +740,8 @@ export class PersistentVoiceSessionManager {
           } else {
             response = "Hello! I'm your Neural Learn study companion. I can help explain concepts, generate quizzes, create revision notes, analyze lectures, and guide your learning. What would you like to study today?";
           }
-        } else if (routeResult.category === "EDUCATIONAL_QUESTION") {
-          response = `Opening the AI Tutor space to study: "${text}". Ask me any academic question.`;
+        } else if (routeResult.category === "EDUCATIONAL_DISCUSSION") {
+          response = `I can help you study that topic. Ask me any academic question and I'll explain it here.`;
         } else if (routeResult.category === "LECTURE_COMMAND") {
           response = `Handling lecture recording session for: "${text}".`;
         } else if (routeResult.category === "QUIZ_COMMAND") {
@@ -740,6 +765,53 @@ export class PersistentVoiceSessionManager {
         this.messageListeners.forEach((cb) => cb(replyMsg));
         browserVoiceProvider.speak(response);
       }, 1000);
+    }
+  }
+
+  private applyAgentStatusFromResult(data: {
+    intent?: string;
+    agentExecuted?: string;
+    action?: { action?: string; payload?: { topic?: string } };
+  }) {
+    const actionName = data.action?.action;
+    const topic = data.action?.payload?.topic;
+    const specialistId = agentRegistry.resolveAgentId(data.intent || data.agentExecuted || "");
+
+    const asyncWorkActions = new Set(["open_quiz", "open_flashcards", "stop_recording", "stop_lecture"]);
+    const actionAgent = actionName ? agentRegistry.resolveAgentFromAction(actionName) : null;
+
+    if (actionName === "open_quiz" && topic) {
+      agentRegistry.processing("quiz", `Generating quiz on ${topic}...`, 75);
+      return;
+    }
+    if (actionName === "open_flashcards" && topic) {
+      agentRegistry.processing("flashcard", `Generating flashcards on ${topic}...`, 75);
+      return;
+    }
+    if (actionName === "start_recording" || actionName === "start_lecture") {
+      agentRegistry.activate("lecture", "Recording lecture...", 60);
+      return;
+    }
+    if (actionName === "stop_recording" || actionName === "stop_lecture") {
+      agentRegistry.processing("notes", "Processing lecture notes...", 70);
+      return;
+    }
+    if (actionName && asyncWorkActions.has(actionName)) {
+      return;
+    }
+
+    if (["TUTORING_REQUEST", "EXPLANATION_REQUEST", "EDUCATIONAL_QUESTION"].includes(data.intent || "")) {
+      agentRegistry.complete("tutor", "Response delivered");
+      agentRegistry.idle("orchestrator", "Monitoring voice command streams");
+      return;
+    }
+
+    if (actionAgent && actionAgent !== "orchestrator") {
+      agentRegistry.complete(actionAgent, "Command processed");
+    } else if (specialistId !== "orchestrator") {
+      agentRegistry.complete(specialistId, "Command processed");
+    } else {
+      agentRegistry.idle("orchestrator", "Monitoring voice command streams");
     }
   }
 

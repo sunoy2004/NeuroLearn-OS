@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Mic, Upload, Square, FileAudio, Brain, Tag, Clock, CheckCircle, Zap, BookOpen, Layers, Sparkles, Activity } from "lucide-react";
+import { Mic, Upload, Square, FileAudio, Brain, Tag, Clock, CheckCircle, Zap, BookOpen, Layers, Sparkles, Activity, Pencil, Trash2, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { agentRegistry } from "@/agents/agentRegistry";
 import { cn } from "@/lib/utils";
-import { apiRequest } from "@/services/api";
+import { apiRequest, uploadFile } from "@/services/api";
 import { useAgent } from "@/context/AgentContext";
 import { persistentVoiceSessionManager } from "@/services/voice/sessionManager";
 import { transcriptStore } from "@/transcripts/transcriptStore";
@@ -17,10 +18,23 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { Lecture } from "@/types";
+import { MarkdownContent, stripMarkdown } from "@/components/MarkdownContent";
 import {
   Select,
   SelectContent,
@@ -109,6 +123,25 @@ export function LectureStudio() {
   const seenConceptsRef = useRef<Set<string>>(new Set());
   const [selectedLecture, setSelectedLecture] = useState<Lecture | null>(null);
   const [lastProcessedSummary, setLastProcessedSummary] = useState<{ summary: string; notes: string; concepts: string[] } | null>(null);
+  const [showSaveLectureModal, setShowSaveLectureModal] = useState(false);
+  const [lectureNameInput, setLectureNameInput] = useState("");
+  const [pendingLectureSave, setPendingLectureSave] = useState<{
+    lectureId: string;
+    transcript: string;
+    duration: number;
+    processed: Record<string, unknown>;
+  } | null>(null);
+  const [savingLecture, setSavingLecture] = useState(false);
+  const [editingLecture, setEditingLecture] = useState<Lecture | null>(null);
+  const [editLectureName, setEditLectureName] = useState("");
+  const [renamingLecture, setRenamingLecture] = useState(false);
+  const [deletingLecture, setDeletingLecture] = useState<Lecture | null>(null);
+  const [deletingInProgress, setDeletingInProgress] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const ACCEPTED_MEDIA = ".mp3,.mp4,.wav,.m4a,.webm,.mpeg,.mpga";
 
   useEffect(() => {
     fetchDashboardData();
@@ -363,8 +396,79 @@ export function LectureStudio() {
     return () => window.removeEventListener("lecture_stopped_trigger", handleStopTrigger);
   }, [setRecording]);
 
+  async function handleMediaUpload(file: File) {
+    if (isRecording || processingLecture || uploadingFile) return;
+
+    setUploadError(null);
+    setUploadingFile(true);
+    agentRegistry.processing("lecture", `Transcribing ${file.name}...`, 35);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const result = await uploadFile<{
+        lectureId: string;
+        transcript: string;
+        durationMinutes: number;
+        filename: string;
+        wordCount: number;
+      }>("/api/analytics/lectures/transcribe-upload", formData);
+
+      clearLectureTranscript();
+      seenConceptsRef.current.clear();
+      transcriptStore.startLecture(result.lectureId);
+
+      const sentences = result.transcript
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const chunks = sentences.length > 0 ? sentences : [result.transcript];
+
+      chunks.forEach((text, i) => {
+        const totalSecs = i * 8;
+        const timeStr = `${String(Math.floor(totalSecs / 60)).padStart(2, "0")}:${String(totalSecs % 60).padStart(2, "0")}`;
+        addLectureTranscriptLine({ time: timeStr, text, type: "speech" });
+        transcriptStore.addChunk(text, "speech", timeStr, result.lectureId);
+      });
+
+      setRecordingTime((result.durationMinutes || 1) * 60);
+      setShowTranscript(true);
+      agentRegistry.complete("lecture", `Transcribed ${result.wordCount} words from ${result.filename}`);
+
+      useAppStore.getState().addAgentNotification(
+        `Transcribed "${result.filename}" — processing notes and flashcards...`,
+        "success",
+        "Lecture Agent"
+      );
+
+      setUploadingFile(false);
+      await saveAndProcessLecture();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      setUploadError(msg);
+      agentRegistry.idle("lecture", "Upload transcription failed");
+      useAppStore.getState().addAgentNotification(msg, "warning", "Lecture Agent");
+      setUploadingFile(false);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function handleBrowseFiles() {
+    if (isRecording || processingLecture || uploadingFile) return;
+    fileInputRef.current?.click();
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) void handleMediaUpload(file);
+  }
+
   const saveAndProcessLecture = async () => {
     setProcessingLecture(true);
+    agentRegistry.processing("notes", "Analyzing lecture transcript...", 45);
+    agentRegistry.processing("lecture", "Processing lecture recording...", 50);
     setPipelineProgress(5);
 
     const steps = INITIAL_PIPELINE.map((s) => ({ ...s, status: "pending" as string, detail: "Waiting..." }));
@@ -403,18 +507,28 @@ export function LectureStudio() {
       steps[3].detail = "Lyzr agents processing...";
       setPipelineSteps([...steps]);
       setPipelineProgress(40);
+      agentRegistry.processing("notes", "Generating summary & study notes...", 65);
+      agentRegistry.processing("flashcard", "Building flashcards...", 70);
+      agentRegistry.processing("quiz", "Generating quiz questions...", 72);
 
       const response = await apiRequest<{
+        lectureId: string;
         concepts?: string[];
         summary?: string;
         notes?: string;
         flashcardCount?: number;
         quizCount?: number;
         title?: string;
-      }>("/api/analytics/lectures", {
+        category?: string;
+        concepts_details?: unknown[];
+        relationships?: unknown[];
+        flashcards?: unknown[];
+        quizzes?: unknown[];
+        language?: string;
+      }>("/api/analytics/lectures/process", {
         method: "POST",
         body: JSON.stringify({
-          title: "Auto-detect",
+          title: "Pending",
           subject: "Computer Science",
           duration: Math.ceil(duration / 60) || 1,
           transcript: finalTranscript,
@@ -423,37 +537,28 @@ export function LectureStudio() {
         })
       });
 
-      transcriptStore.finalizeLecture(lectureId || undefined);
-
       const conceptCount = response.concepts?.length ?? 0;
       steps[3].status = "complete";
       steps[3].detail = `${conceptCount} concepts found`;
-      steps[4].status = "active";
-      steps[4].detail = "Embedding to Qdrant...";
-      setPipelineSteps([...steps]);
-      setPipelineProgress(60);
-
-      await fetchDashboardData();
-
       steps[4].status = "complete";
-      steps[4].detail = "Memory stored";
-      steps[5].status = "active";
-      steps[5].detail = "Updating graph...";
-      setPipelineSteps([...steps]);
-      setPipelineProgress(75);
-
-      await fetchConceptGraph();
-
+      steps[4].detail = "Ready to save";
       steps[5].status = "complete";
-      steps[5].detail = "Graph updated";
+      steps[5].detail = "Awaiting lecture name";
       steps[6].status = "complete";
-      steps[6].detail = `${response.flashcardCount ?? 0} flashcards`;
+      steps[6].detail = `${response.flashcardCount ?? 0} flashcards prepared`;
       steps[7].status = "complete";
-      steps[7].detail = `${response.quizCount ?? 0} quiz questions`;
+      steps[7].detail = `${response.quizCount ?? 0} quiz questions prepared`;
       setPipelineSteps([...steps]);
       setPipelineProgress(100);
 
-      await fetchFlashcards();
+      setPendingLectureSave({
+        lectureId: response.lectureId || lectureId || `lec_${Date.now()}`,
+        transcript: finalTranscript,
+        duration: Math.ceil(duration / 60) || 1,
+        processed: response as Record<string, unknown>,
+      });
+      setLectureNameInput(response.title && response.title !== "Pending" ? response.title : "");
+      setShowSaveLectureModal(true);
 
       if (response.summary || response.notes) {
         setLastProcessedSummary({
@@ -463,8 +568,13 @@ export function LectureStudio() {
         });
       }
 
+      agentRegistry.complete("notes", "Study notes compiled");
+      agentRegistry.complete("lecture", "Lecture processed");
+      agentRegistry.complete("flashcard", `${response.flashcardCount ?? 0} flashcards prepared`);
+      agentRegistry.complete("quiz", `${response.quizCount ?? 0} quiz questions prepared`);
+
       useAppStore.getState().addAgentNotification(
-        `Lecture processed — ${conceptCount} concepts, ${response.flashcardCount ?? 0} flashcards generated.`,
+        `Lecture processed — name your lecture to save it to the library.`,
         "success",
         "Lecture Agent"
       );
@@ -472,10 +582,12 @@ export function LectureStudio() {
       setTimeout(() => {
         setProcessingLecture(false);
         setShowTranscript(true);
-      }, 1200);
+      }, 800);
 
     } catch (err) {
       console.error("Failed saving/processing lecture:", err);
+      agentRegistry.idle("notes", "Lecture processing failed");
+      agentRegistry.idle("lecture", "Lecture processing failed");
       setProcessingLecture(false);
       useAppStore.getState().addAgentNotification(
         err instanceof Error ? err.message : "Lecture processing failed. Ensure you spoke during recording.",
@@ -483,6 +595,134 @@ export function LectureStudio() {
         "Lecture Agent"
       );
     }
+  };
+
+  const confirmSaveLecture = async () => {
+    if (!pendingLectureSave || !lectureNameInput.trim()) return;
+    setSavingLecture(true);
+    try {
+      const p = pendingLectureSave.processed;
+      await apiRequest("/api/analytics/lectures/save", {
+        method: "POST",
+        body: JSON.stringify({
+          title: lectureNameInput.trim(),
+          subject: "Computer Science",
+          duration: pendingLectureSave.duration,
+          transcript: pendingLectureSave.transcript,
+          lecture_id: pendingLectureSave.lectureId,
+          language: getSpeechLanguageHint(),
+          category: p.category || "General",
+          concepts: p.concepts || [],
+          concepts_details: p.concepts_details || [],
+          relationships: p.relationships || [],
+          summary: p.summary || "",
+          notes: p.notes || "",
+          flashcards: p.flashcards || [],
+          quizzes: p.quizzes || [],
+        }),
+      });
+
+      transcriptStore.finalizeLecture(pendingLectureSave.lectureId);
+      await fetchDashboardData();
+      await fetchConceptGraph();
+      await fetchFlashcards();
+
+      useAppStore.getState().addAgentNotification(
+        `Lecture "${lectureNameInput.trim()}" saved to your library.`,
+        "success",
+        "Lecture Agent"
+      );
+      setShowSaveLectureModal(false);
+      setPendingLectureSave(null);
+      setLectureNameInput("");
+    } catch (err) {
+      console.error("Failed to save lecture:", err);
+      useAppStore.getState().addAgentNotification(
+        err instanceof Error ? err.message : "Failed to save lecture.",
+        "warning",
+        "Lecture Agent"
+      );
+    } finally {
+      setSavingLecture(false);
+    }
+  };
+
+  const openEditLecture = (lecture: Lecture, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingLecture(lecture);
+    setEditLectureName(lecture.title);
+  };
+
+  const confirmRenameLecture = async () => {
+    if (!editingLecture || !editLectureName.trim()) return;
+    setRenamingLecture(true);
+    try {
+      await apiRequest(`/api/analytics/lectures/${editingLecture.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: editLectureName.trim() }),
+      });
+      await fetchDashboardData();
+      if (selectedLecture?.id === editingLecture.id) {
+        setSelectedLecture({ ...selectedLecture, title: editLectureName.trim() });
+      }
+      useAppStore.getState().addAgentNotification(
+        `Lecture renamed to "${editLectureName.trim()}".`,
+        "success",
+        "Lecture Agent"
+      );
+      setEditingLecture(null);
+      setEditLectureName("");
+    } catch (err) {
+      useAppStore.getState().addAgentNotification(
+        err instanceof Error ? err.message : "Failed to rename lecture.",
+        "warning",
+        "Lecture Agent"
+      );
+    } finally {
+      setRenamingLecture(false);
+    }
+  };
+
+  const openDeleteLecture = (lecture: Lecture, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeletingLecture(lecture);
+  };
+
+  const confirmDeleteLecture = async () => {
+    if (!deletingLecture) return;
+    setDeletingInProgress(true);
+    try {
+      await apiRequest(`/api/analytics/lectures/${deletingLecture.id}`, { method: "DELETE" });
+      await fetchDashboardData();
+      if (selectedLecture?.id === deletingLecture.id) {
+        setSelectedLecture(null);
+      }
+      useAppStore.getState().addAgentNotification(
+        `Lecture "${deletingLecture.title}" deleted.`,
+        "success",
+        "Lecture Agent"
+      );
+      setDeletingLecture(null);
+    } catch (err) {
+      useAppStore.getState().addAgentNotification(
+        err instanceof Error ? err.message : "Failed to delete lecture.",
+        "warning",
+        "Lecture Agent"
+      );
+    } finally {
+      setDeletingInProgress(false);
+    }
+  };
+
+  const cancelSaveLecture = () => {
+    setShowSaveLectureModal(false);
+    setPendingLectureSave(null);
+    setLectureNameInput("");
+    useAppStore.getState().addAgentNotification(
+      "Lecture not saved — processed content was discarded.",
+      "info",
+      "Lecture Agent"
+    );
   };
 
   const linesToRender = activeLectureTranscript;
@@ -571,17 +811,55 @@ export function LectureStudio() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/50 border-dashed hover:border-primary/40 transition-colors cursor-pointer group">
+          <Card
+            className={cn(
+              "border-border/50 border-dashed transition-colors group",
+              uploadingFile ? "border-primary/50 bg-primary/5" : "hover:border-primary/40 cursor-pointer",
+              (isRecording || processingLecture) && "opacity-60 pointer-events-none"
+            )}
+            onClick={handleBrowseFiles}
+          >
             <CardContent className="pt-5 pb-5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_MEDIA}
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
               <div className="flex items-center gap-4">
                 <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                  <Upload className="size-4 text-primary" />
+                  {uploadingFile ? (
+                    <Loader2 className="size-4 text-primary animate-spin" />
+                  ) : (
+                    <Upload className="size-4 text-primary" />
+                  )}
                 </div>
-                <div>
-                  <p className="text-sm font-medium">Upload Audio or Video</p>
-                  <p className="text-xs text-muted-foreground">MP3, MP4, WAV, M4A up to 2GB · Async pipeline</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">
+                    {uploadingFile ? "Transcribing upload..." : "Upload Audio or Video"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {uploadingFile
+                      ? "Speech-to-text in progress — this may take a minute"
+                      : "MP3, MP4, WAV, M4A up to 500MB · Auto-transcribe & process"}
+                  </p>
+                  {uploadError && (
+                    <p className="text-xs text-[var(--neuro-rose)] mt-1">{uploadError}</p>
+                  )}
                 </div>
-                <Button variant="outline" size="sm" className="ml-auto">Browse Files</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto shrink-0"
+                  disabled={uploadingFile || isRecording || processingLecture}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleBrowseFiles();
+                  }}
+                >
+                  {uploadingFile ? "Uploading..." : "Browse Files"}
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -642,6 +920,11 @@ export function LectureStudio() {
               <CardDescription className="text-xs">{lectures.length} lectures · Qdrant memory</CardDescription>
             </CardHeader>
             <CardContent className="pt-0 space-y-2">
+              {lectures.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-6">
+                  No lectures saved yet. Record and name a lecture to build your library.
+                </p>
+              )}
               {lectures.map((lecture) => (
                 <div
                   key={lecture.id}
@@ -652,8 +935,28 @@ export function LectureStudio() {
                   className="p-3 rounded-lg border border-border/40 hover:border-primary/30 bg-muted/10 hover:bg-muted/20 transition-all cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <p className="text-xs font-medium leading-tight">{lecture.title}</p>
-                    <Badge variant="outline" className="text-[9px] shrink-0">{lecture.subject}</Badge>
+                    <p className="text-xs font-medium leading-tight flex-1 min-w-0">{lecture.title}</p>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 text-muted-foreground hover:text-primary"
+                        onClick={(e) => openEditLecture(lecture, e)}
+                        aria-label={`Rename ${lecture.title}`}
+                      >
+                        <Pencil className="size-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 text-muted-foreground hover:text-[var(--neuro-rose)]"
+                        onClick={(e) => openDeleteLecture(lecture, e)}
+                        aria-label={`Delete ${lecture.title}`}
+                      >
+                        <Trash2 className="size-3" />
+                      </Button>
+                      <Badge variant="outline" className="text-[9px]">{lecture.subject}</Badge>
+                    </div>
                   </div>
                   <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                     <span className="flex items-center gap-1"><Clock className="size-2.5" />{lecture.duration}m</span>
@@ -688,7 +991,7 @@ export function LectureStudio() {
                     <Badge key={c} variant="outline" className="text-[9px]">{c}</Badge>
                   ))}
                 </div>
-                <p className="text-xs text-foreground/80 line-clamp-4">{lastProcessedSummary.summary}</p>
+                <p className="text-xs text-foreground/80 line-clamp-4">{stripMarkdown(lastProcessedSummary.summary)}</p>
                 <Button
                   variant="outline"
                   size="sm"
@@ -726,16 +1029,102 @@ export function LectureStudio() {
         </div>
       </div>
 
-      <Dialog open={!!selectedLecture} onOpenChange={(open) => !open && setSelectedLecture(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+      <Dialog open={!!editingLecture} onOpenChange={(open) => !open && setEditingLecture(null)}>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{selectedLecture?.title}</DialogTitle>
+            <DialogTitle>Rename Lecture</DialogTitle>
+            <DialogDescription>Update the name shown in your lecture library.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="edit-lecture-name">Lecture Name</Label>
+            <Input
+              id="edit-lecture-name"
+              value={editLectureName}
+              onChange={(e) => setEditLectureName(e.target.value)}
+              placeholder="e.g. DBMS Lecture"
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditingLecture(null)} disabled={renamingLecture}>
+              Cancel
+            </Button>
+            <Button onClick={confirmRenameLecture} disabled={!editLectureName.trim() || renamingLecture}>
+              {renamingLecture ? "Saving..." : "Save Name"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deletingLecture} onOpenChange={(open) => !open && setDeletingLecture(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete lecture?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove &quot;{deletingLecture?.title}&quot; from your library.
+              Summary, notes, and transcript chunks for this lecture will be deleted.
+              Generated flashcards and quizzes are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingInProgress}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteLecture}
+              disabled={deletingInProgress}
+            >
+              {deletingInProgress ? "Deleting..." : "Delete Lecture"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={showSaveLectureModal} onOpenChange={(open) => !open && cancelSaveLecture()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save Lecture</DialogTitle>
+            <DialogDescription>
+              Your lecture has been processed. Enter a name before saving to the library.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="lecture-name">Lecture Name</Label>
+            <Input
+              id="lecture-name"
+              value={lectureNameInput}
+              onChange={(e) => setLectureNameInput(e.target.value)}
+              placeholder="e.g. Operating Systems Unit 1"
+              autoFocus
+            />
+            {pendingLectureSave && (
+              <p className="text-xs text-muted-foreground">
+                {(pendingLectureSave.processed.concepts as string[] | undefined)?.length ?? 0} concepts ·{" "}
+                {pendingLectureSave.processed.flashcardCount as number} flashcards ·{" "}
+                {pendingLectureSave.processed.quizCount as number} quiz questions
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={cancelSaveLecture} disabled={savingLecture}>
+              Cancel
+            </Button>
+            <Button onClick={confirmSaveLecture} disabled={!lectureNameInput.trim() || savingLecture}>
+              {savingLecture ? "Saving..." : "Save Lecture"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedLecture} onOpenChange={(open) => !open && setSelectedLecture(null)}>
+        <DialogContent className="!flex sm:max-w-2xl max-h-[85vh] flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-border/40 px-6 py-4 text-left">
+            <DialogTitle className="pr-8">{selectedLecture?.title}</DialogTitle>
             <DialogDescription>
               {selectedLecture?.subject} · {selectedLecture?.duration}m · {selectedLecture?.conceptCount} concepts
             </DialogDescription>
           </DialogHeader>
           {selectedLecture && (
-            <ScrollArea className="flex-1 max-h-[60vh] pr-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
               <div className="space-y-4">
                 {selectedLecture.topics.length > 0 && (
                   <div>
@@ -750,17 +1139,13 @@ export function LectureStudio() {
                 {selectedLecture.summary && (
                   <div>
                     <h4 className="text-xs font-semibold text-[var(--neuro-cyan)] mb-2">Summary</h4>
-                    <p className="text-sm text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                      {selectedLecture.summary}
-                    </p>
+                    <MarkdownContent content={selectedLecture.summary} />
                   </div>
                 )}
                 {selectedLecture.notes && (
                   <div>
                     <h4 className="text-xs font-semibold text-[var(--neuro-green)] mb-2">Study Notes</h4>
-                    <div className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap prose prose-sm dark:prose-invert max-w-none">
-                      {selectedLecture.notes}
-                    </div>
+                    <MarkdownContent content={selectedLecture.notes} />
                   </div>
                 )}
                 {!selectedLecture.summary && !selectedLecture.notes && (
@@ -769,7 +1154,7 @@ export function LectureStudio() {
                   </p>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           )}
         </DialogContent>
       </Dialog>

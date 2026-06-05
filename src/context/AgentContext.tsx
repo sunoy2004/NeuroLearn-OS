@@ -52,11 +52,11 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (newVoice === "listening") {
         agentRegistry.activate("orchestrator", "Listening to microphone...", 50);
       } else if (newVoice === "thinking") {
-        agentRegistry.processing("orchestrator", "Thinking / Decoding cognitive intent...", 80);
+        agentRegistry.processing("orchestrator", "Decoding intent...", 80);
       } else if (newVoice === "responding") {
-        agentRegistry.activate("orchestrator", "Responding to student...", 90);
+        agentRegistry.processing("orchestrator", "Coordinating agent response...", 88);
       } else if (newVoice === "executing") {
-        agentRegistry.activate("orchestrator", "Orchestrating system action...", 95);
+        agentRegistry.activate("orchestrator", "Executing system action...", 92);
       } else if (newVoice === "idle") {
         agentRegistry.idle("orchestrator", "Monitoring voice command streams");
       }
@@ -72,7 +72,7 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const unsubStream = persistentVoiceSessionManager.subscribeStream((streamText) => {
       setAiResponseStream(streamText);
       if (streamText) {
-        agentRegistry.processing("orchestrator", "Streaming companion response...", 90);
+        agentRegistry.processing("tutor", "Streaming tutor response...", 90);
       }
     });
 
@@ -80,8 +80,20 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setMessages((prev) => [...prev, msg]);
       setAiResponseStream("");
 
-      if (msg.role === "assistant") {
-        const agentId = agentRegistry.resolveAgentId(msg.agentName || "orchestrator");
+      if (msg.role !== "assistant") return;
+
+      const asyncIntents = new Set([
+        "QUIZ_REQUEST",
+        "FLASHCARD_CREATE",
+        "LECTURE_START",
+        "LECTURE_STOP",
+      ]);
+      if (msg.intent && asyncIntents.has(msg.intent)) {
+        return;
+      }
+
+      const agentId = agentRegistry.resolveAgentId(msg.intent || msg.agentName || "orchestrator");
+      if (agentId !== "orchestrator") {
         agentRegistry.complete(agentId, msg.intent ? `Processed: ${msg.intent}` : "Command processed");
       }
     });

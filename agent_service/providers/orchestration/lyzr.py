@@ -46,6 +46,21 @@ class LyzrOrchestratorProvider(OrchestratorProvider):
         )
 
     def process_command(self, transcript: str, user_id: str = "demo-user") -> Tuple[str, str, Any]:
+        import re
+        lower_msg = transcript.lower().strip()
+        greeting_patterns = (
+            r"^(?:hello|hi|hey|hiya|howdy|greetings|yo|sup)(?:\s+there|\s+everyone|\s+again)?[!.,?\s]*$",
+            r"^good\s+(?:morning|afternoon|evening|day)[!.,?\s]*$",
+            r"^how\s+are\s+you(?:\s+doing)?[!.,?\s]*$",
+            r"^what(?:'s|\s+is)\s+up[!.,?\s]*$",
+        )
+        if any(re.match(p, lower_msg) for p in greeting_patterns):
+            return "GREETING", (
+                "Hello! I'm your Neural Learn study companion. "
+                "I can help explain concepts, generate quizzes, and guide your learning. "
+                "What would you like to study today?"
+            ), AgentAction(action="none")
+
         # 1. Extract Intent
         intent_json = self.intent_agent.execute(transcript)
         try:
@@ -106,15 +121,29 @@ class LyzrOrchestratorProvider(OrchestratorProvider):
             response_text = "Opening the learning analytics page to inspect your cognitive profile progress."
             action = tool_registry.execute_tool("navigate", target="analytics")
             
-        elif intent == "TUTORING_REQUEST" or intent == "EXPLANATION_REQUEST":
+        elif intent in ("TUTORING_REQUEST", "EXPLANATION_REQUEST", "EDUCATIONAL_QUESTION", "GENERAL_CONVERSATION", "GREETING", "UNKNOWN"):
             agent_executed = "tutor"
             response_text = self.tutor_agent.execute(transcript, context)
-            action = tool_registry.execute_tool("navigate", target="tutor")
-            
+            action = AgentAction(action="none")
+
+        elif intent.startswith("NAVIGATE_"):
+            agent_executed = "navigation"
+            target_map = {
+                "NAVIGATE_DASHBOARD": "dashboard",
+                "NAVIGATE_TUTOR": "tutor",
+                "NAVIGATE_LECTURE": "lecture-studio",
+                "NAVIGATE_REVISION": "revision",
+                "NAVIGATE_ANALYTICS": "analytics",
+                "NAVIGATE_GRAPH": "knowledge-graph",
+            }
+            target = target_map.get(intent, "dashboard")
+            response_text = f"Navigating to {target.replace('-', ' ').title()}."
+            action = tool_registry.execute_tool("navigate", target=target)
+
         else:
             agent_executed = "tutor"
             response_text = self.tutor_agent.execute(transcript, context)
-            action = tool_registry.execute_tool("navigate", target="tutor")
+            action = AgentAction(action="none")
 
         # 4. Save to Memory provider
         self.memory.store_memory(

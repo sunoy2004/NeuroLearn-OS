@@ -87,15 +87,16 @@ async def _process_and_respond(websocket: WebSocket, transcript: str):
     """Shared pipeline: orchestrate → stream tokens → TTS → send result."""
     orchestrator = factory.get_orchestrator_provider()
     intent, response_text, action = orchestrator.process_command(transcript, "demo-user")
+    agent_executed = _resolve_agent_label(intent, action)
 
-    print(f"[AgentService] Intent: {intent} | Response: {response_text[:80]}...")
+    print(f"[AgentService] Intent: {intent} | Agent: {agent_executed} | Response: {response_text[:80]}...")
 
     # Stream start event
     await websocket.send_json({
         "event": "stream_start",
         "transcript": transcript,
         "intent": intent,
-        "agentExecuted": intent.lower()
+        "agentExecuted": agent_executed
     })
 
     # True token-by-token streaming using agent's isolated LLM stream
@@ -139,11 +140,46 @@ async def _process_and_respond(websocket: WebSocket, transcript: str):
         "intent": intent,
         "response": response_text,
         "audioUrl": audio_url,
-        "agentExecuted": intent.lower(),
+        "agentExecuted": agent_executed,
         "action": action_dict
     }
     event_bus.publish("agent_action_completed", payload)
     await websocket.send_json(payload)
+
+
+def _resolve_agent_label(intent: str, action) -> str:
+    """Map intent/action to a stable agent id for the frontend Agent Network."""
+    action_name = ""
+    if action is not None:
+        if hasattr(action, "action"):
+            action_name = getattr(action, "action", "") or ""
+        elif isinstance(action, dict):
+            action_name = action.get("action", "")
+
+    action_map = {
+        "open_quiz": "quiz",
+        "open_flashcards": "flashcard",
+        "start_recording": "lecture",
+        "stop_recording": "notes",
+        "display_summary": "notes",
+    }
+    if action_name in action_map:
+        return action_map[action_name]
+
+    intent_map = {
+        "LECTURE_START": "lecture",
+        "LECTURE_STOP": "notes",
+        "FLASHCARD_CREATE": "flashcard",
+        "QUIZ_REQUEST": "quiz",
+        "TUTORING_REQUEST": "tutor",
+        "EXPLANATION_REQUEST": "tutor",
+        "EDUCATIONAL_QUESTION": "tutor",
+        "ANALYTICS_QUERY": "analytics",
+        "PROGRESS_QUERY": "analytics",
+        "WEAK_AREAS_QUERY": "analytics",
+        "NAVIGATE_GRAPH": "knowledge-graph",
+    }
+    return intent_map.get(intent, "orchestrator")
 
 
 @app.websocket("/ws/agent-stream")

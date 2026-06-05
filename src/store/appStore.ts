@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Page, ChatMessage, AgentStatus, LearningProfile, Lecture, Concept, WeakTopic, RetentionPoint, MasteryPoint, VoiceCommand, Flashcard, QuizQuestion } from "@/types";
+import type { Page, ChatMessage, AgentStatus, LearningProfile, Lecture, Concept, WeakTopic, RetentionPoint, MasteryPoint, VoiceCommand, Flashcard, QuizQuestion, SavedQuiz } from "@/types";
 import { apiRequest } from "@/services/api";
 import { agentRegistry } from "@/agents/agentRegistry";
 
@@ -54,6 +54,8 @@ interface AppState {
 
   flashcards: Flashcard[];
   quizQuestions: QuizQuestion[];
+  savedQuizzes: SavedQuiz[];
+  activeSavedQuizId: string | null;
   learningGoals: { id: number; title: string; subjects: string[]; progress: number; deadline: string; roadmapReport?: string }[];
 
   // Agent Notifications
@@ -72,7 +74,21 @@ interface AppState {
   fetchDashboardData: () => Promise<void>;
   fetchConceptGraph: () => Promise<void>;
   fetchFlashcards: () => Promise<void>;
+  fetchFlashcardsForTopic: (topic: string, options?: { count?: number; forceRegenerate?: boolean }) => Promise<void>;
   fetchQuizQuestions: (topic: string, options?: { count?: number; forceRegenerate?: boolean }) => Promise<void>;
+  fetchSavedQuizzes: () => Promise<void>;
+  saveQuizSession: (payload: {
+    topic: string;
+    questions: QuizQuestion[];
+    correct: number;
+    total: number;
+    accuracy: number;
+    analysis?: Record<string, unknown>;
+    sessionId?: string | null;
+  }) => Promise<SavedQuiz>;
+  loadSavedQuiz: (sessionId: string) => Promise<void>;
+  resetQuizSession: () => void;
+  setActiveSavedQuizId: (id: string | null) => void;
   fetchLearningGoals: () => Promise<void>;
   syncAgentsFromRegistry: () => void;
 }
@@ -127,6 +143,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   masteryData: [],
   flashcards: [],
   quizQuestions: [],
+  savedQuizzes: [],
+  activeSavedQuizId: null,
   learningGoals: [],
 
   // Agent Notifications
@@ -175,6 +193,75 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  resetQuizSession: () => set({ quizIndex: 0, quizAnswers: {} }),
+  setActiveSavedQuizId: (id) => set({ activeSavedQuizId: id }),
+
+  fetchSavedQuizzes: async () => {
+    try {
+      const data = await apiRequest<SavedQuiz[]>("/api/quiz/sessions");
+      set({ savedQuizzes: data });
+      localStorage.setItem("neurolearn_saved_quizzes", JSON.stringify(data));
+    } catch (e) {
+      console.warn("Failed fetching saved quizzes.", e);
+      const cache = localStorage.getItem("neurolearn_saved_quizzes");
+      if (cache) set({ savedQuizzes: JSON.parse(cache) });
+    }
+  },
+
+  saveQuizSession: async (payload) => {
+    const saved = await apiRequest<SavedQuiz>("/api/quiz/sessions/save", {
+      method: "POST",
+      body: JSON.stringify({
+        topic: payload.topic,
+        questions: payload.questions,
+        correct: payload.correct,
+        total: payload.total,
+        accuracy: payload.accuracy,
+        analysis: payload.analysis,
+        sessionId: payload.sessionId || undefined,
+      }),
+    });
+    await get().fetchSavedQuizzes();
+    set({ activeSavedQuizId: saved.id });
+    return saved;
+  },
+
+  loadSavedQuiz: async (sessionId) => {
+    const data = await apiRequest<{
+      id: string;
+      topic: string;
+      questions: QuizQuestion[];
+    }>(`/api/quiz/sessions/${sessionId}`);
+    set({
+      quizQuestions: data.questions,
+      quizIndex: 0,
+      quizAnswers: {},
+      activeSavedQuizId: data.id,
+    });
+    localStorage.setItem(`neurolearn_quiz_${data.topic}`, JSON.stringify(data.questions));
+  },
+
+  fetchFlashcardsForTopic: async (topic: string, options?: { count?: number; forceRegenerate?: boolean }) => {
+    try {
+      const generated = await apiRequest<Flashcard[]>("/api/revision/flashcards/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          topic,
+          count: options?.count ?? 15,
+          forceRegenerate: options?.forceRegenerate ?? false,
+        }),
+      });
+      await get().fetchFlashcards();
+      set({ activeFlashcardIndex: 0 });
+      if (generated.length > 0) {
+        localStorage.setItem(`neurolearn_flashcards_${topic}`, JSON.stringify(generated));
+      }
+    } catch (e) {
+      console.warn("Failed generating flashcards for topic.", e);
+      throw e;
+    }
+  },
+
   fetchFlashcards: async () => {
     try {
       const data = await apiRequest<Flashcard[]>("/api/revision/flashcards");
@@ -203,7 +290,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           forceRegenerate: options?.forceRegenerate ?? false,
         })
       });
-      set({ quizQuestions: data, quizIndex: 0, quizAnswers: {} });
+      set({ quizQuestions: data, quizIndex: 0, quizAnswers: {}, activeSavedQuizId: null });
       localStorage.setItem(`neurolearn_quiz_${topic}`, JSON.stringify(data));
     } catch (e) {
       console.warn("Failed fetching quiz questions from server. Offline fallback active.", e);

@@ -23,3 +23,27 @@ export async function apiRequest<T = any>(
 
   return response.json() as Promise<T>;
 }
+
+export async function uploadFile<T = unknown>(
+  endpoint: string,
+  formData: FormData
+): Promise<T> {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let message = `HTTP error: ${response.status}`;
+    try {
+      const body = await response.json();
+      message = body.detail || body.message || message;
+    } catch {
+      const text = await response.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<T>;
+}

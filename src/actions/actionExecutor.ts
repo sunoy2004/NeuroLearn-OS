@@ -1,10 +1,25 @@
 import { actionRegistry } from "./actionRegistry";
 import { useAppStore } from "@/store/appStore";
+import { isGreetingTranscript } from "@/services/conversationIntentClassifier";
+import { agentRegistry } from "@/agents/agentRegistry";
 
 // Navigation helper
 const navigateTo = (pageName: any) => {
   useAppStore.getState().setPage(pageName);
 };
+
+/** Flatten AgentAction shape `{ action, target, payload: { topic } }` for handlers. */
+function normalizeActionPayload(raw?: Record<string, unknown>): Record<string, unknown> {
+  if (!raw) return {};
+  const nested =
+    raw.payload && typeof raw.payload === "object" && !Array.isArray(raw.payload)
+      ? { ...(raw.payload as Record<string, unknown>) }
+      : {};
+  if (raw.target) nested.target = nested.target ?? raw.target;
+  if (raw.transcript) nested.transcript = raw.transcript;
+  if (raw.message) nested.message = raw.message;
+  return nested;
+}
 
 export function registerDefaultActions() {
   const store = useAppStore.getState();
@@ -44,6 +59,7 @@ export function registerDefaultActions() {
     name: "start_lecture",
     handler: (payload) => {
       navigateTo("lecture-studio");
+      agentRegistry.activate("lecture", `Recording — ${payload?.subject || "General Study"}`, 55);
       // prepareForLectureRecording already called by sessionManager before this action
       useAppStore.getState().clearLectureTranscript();
       useAppStore.getState().setRecordingTime(0);
@@ -60,6 +76,7 @@ export function registerDefaultActions() {
     name: "stop_lecture",
     handler: () => {
       useAppStore.getState().setRecording(false);
+      agentRegistry.processing("notes", "Compiling lecture notes & summary...", 70);
       useAppStore.getState().addAgentNotification(
         "Lecture recording stopped. Processing dynamic note summaries...",
         "success",
@@ -93,16 +110,41 @@ export function registerDefaultActions() {
     }
   });
 
+  actionRegistry.register({
+    name: "open_flashcards",
+    handler: (payload) => {
+      navigateTo("revision");
+      const topic = (payload?.topic as string) || "General";
+      window.dispatchEvent(new CustomEvent("revision_flashcard_topic", { detail: { topic } }));
+      agentRegistry.processing("flashcard", `Generating flashcards on ${topic}...`, 72);
+      void useAppStore
+        .getState()
+        .fetchFlashcardsForTopic(topic, { count: 15, forceRegenerate: true })
+        .then(() => agentRegistry.complete("flashcard", `Flashcards ready on ${topic}`))
+        .catch(() => agentRegistry.idle("flashcard", "Flashcard generation failed"));
+      useAppStore.getState().addAgentNotification(
+        `Generating flashcards on ${topic}...`,
+        "success",
+        "FlashcardAgent"
+      );
+    }
+  });
+
   // Quiz Workflow Registry
   actionRegistry.register({
     name: "open_quiz",
     handler: (payload) => {
       navigateTo("revision");
-      const topic = payload?.topic || "General";
+      const topic = (payload?.topic as string) || "General";
       window.dispatchEvent(new CustomEvent("revision_quiz_topic", { detail: { topic } }));
-      useAppStore.getState().fetchQuizQuestions(topic, { count: 10, forceRegenerate: true });
+      agentRegistry.processing("quiz", `Generating quiz on ${topic}...`, 72);
+      void useAppStore
+        .getState()
+        .fetchQuizQuestions(topic, { count: 10, forceRegenerate: true })
+        .then(() => agentRegistry.complete("quiz", `Quiz ready on ${topic}`))
+        .catch(() => agentRegistry.idle("quiz", "Quiz generation failed"));
       useAppStore.getState().addAgentNotification(
-        `Generating quiz on ${topic} from your lecture materials...`,
+        `Generating quiz on ${topic}...`,
         "success",
         "QuizAgent"
       );
@@ -139,17 +181,32 @@ export function registerDefaultActions() {
  * Executes a frontend action by resolving it from the action registry
  */
 export function executeAction(actionName: string, payload?: any): boolean {
+  const transcript = payload?.transcript || payload?.message || "";
+  if (
+    actionName === "navigate" &&
+    payload?.target === "tutor" &&
+    transcript &&
+    isGreetingTranscript(transcript)
+  ) {
+    console.log("[ActionExecutor] Skipping tutor navigation for greeting-only utterance");
+    return true;
+  }
+
   // Normalize action name (e.g. "navigate" with target "tutor" becomes "navigate_tutor")
   let targetAction = actionName;
   if (actionName === "navigate" && payload?.target) {
     targetAction = `navigate_${payload.target.replace(/^\//, "")}`;
   }
 
+  const normalizedPayload = normalizeActionPayload(
+    payload && typeof payload === "object" ? (payload as Record<string, unknown>) : undefined
+  );
+
   const registered = actionRegistry.get(targetAction);
   if (registered) {
-    console.log(`[ActionExecutor] Executing: ${targetAction}`, payload);
+    console.log(`[ActionExecutor] Executing: ${targetAction}`, normalizedPayload);
     try {
-      registered.handler(payload);
+      registered.handler(normalizedPayload);
       return true;
     } catch (err) {
       console.error(`[ActionExecutor] Error executing ${targetAction}:`, err);
@@ -162,15 +219,16 @@ export function executeAction(actionName: string, payload?: any): boolean {
   if (actionName === "start_recording") mappedAction = "start_lecture";
   if (actionName === "stop_recording") mappedAction = "stop_lecture";
   if (actionName === "open_quiz") mappedAction = "open_quiz";
+  if (actionName === "open_flashcards") mappedAction = "open_flashcards";
   if (actionName === "open_modal") mappedAction = "open_modal";
   if (actionName === "display_summary") mappedAction = "display_summary";
 
   if (mappedAction) {
     const regFallback = actionRegistry.get(mappedAction);
     if (regFallback) {
-      console.log(`[ActionExecutor] Executing mapped action: ${mappedAction}`, payload);
+      console.log(`[ActionExecutor] Executing mapped action: ${mappedAction}`, normalizedPayload);
       try {
-        regFallback.handler(payload);
+        regFallback.handler(normalizedPayload);
         return true;
       } catch (err) {
         console.error(`[ActionExecutor] Error executing mapped ${mappedAction}:`, err);

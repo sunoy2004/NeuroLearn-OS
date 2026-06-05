@@ -32,6 +32,20 @@ export interface QuizQuestion {
   topic: string;
 }
 
+export interface SavedQuiz {
+  id: string;
+  topic: string;
+  title: string;
+  totalQuestions: number;
+  lastScore: number;
+  bestScore: number;
+  lastAccuracy: number;
+  attemptCount: number;
+  savedAt: string;
+  updatedAt?: string;
+  needsReattempt: boolean;
+}
+
 export interface Flashcard {
   id: string;
   front: string;

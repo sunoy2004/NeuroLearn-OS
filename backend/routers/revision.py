@@ -9,11 +9,17 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 from backend.database import get_db, DBFlashcard, DBUserProfile, DBLearningGoal
+from backend.services.revision_content_service import generate_flashcards_for_topic
 
 router = APIRouter(prefix="/api/revision", tags=["revision"])
 
 class ReviewRequest(BaseModel):
     rating: str  # "hard", "ok", "easy"
+
+class FlashcardGenerateRequest(BaseModel):
+    topic: str
+    count: int = 15
+    forceRegenerate: bool = False
 
 class GoalCreateRequest(BaseModel):
     title: str
@@ -39,6 +45,28 @@ async def get_due_flashcards(db: Session = Depends(get_db)):
             }
             for fc in flashcards
         ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/flashcards/generate")
+async def generate_flashcards(req: FlashcardGenerateRequest):
+    """Generate topic-based flashcards via LLM — no long-lived DB session."""
+    try:
+        topic = (req.topic or "General").strip()
+        count = max(10, min(req.count, 30))
+        cards = generate_flashcards_for_topic(
+            topic=topic,
+            count=count,
+            force_regenerate=req.forceRegenerate,
+        )
+        if not cards:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No flashcards could be generated for '{topic}'.",
+            )
+        return cards
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

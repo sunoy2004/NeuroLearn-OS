@@ -7,12 +7,14 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp, FileText, ExternalLink } from "lucide-react";
+import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp, FileText, ExternalLink, Save, Play } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { Flashcard } from "@/types";
 import { cn } from "@/lib/utils";
 import { quizStore } from "@/services/quizStore";
+import { agentRegistry } from "@/agents/agentRegistry";
 import { apiRequest } from "@/services/api";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { useAgent } from "@/context/AgentContext";
 
 function FlashcardViewer({ cards }: { cards?: Flashcard[] }) {
@@ -104,24 +106,220 @@ function FlashcardViewer({ cards }: { cards?: Flashcard[] }) {
   );
 }
 
-function QuizViewer() {
+interface QuizResultAnalysis {
+  strongAreas: string[];
+  weakAreas: string[];
+  conceptsMissed: string[];
+  recommendedRevision: string[];
+}
+
+interface QuizSessionResult {
+  topic: string;
+  total: number;
+  correct: number;
+  wrong: number;
+  accuracy: number;
+  analysis: QuizResultAnalysis;
+}
+
+function QuizViewer({ topic }: { topic: string }) {
   const quizIndex = useAppStore((s) => s.quizIndex);
   const setQuizIndex = useAppStore((s) => s.setQuizIndex);
   const quizAnswers = useAppStore((s) => s.quizAnswers);
   const setQuizAnswer = useAppStore((s) => s.setQuizAnswer);
   const quizQuestions = useAppStore((s) => s.quizQuestions);
+  const resetQuizSession = useAppStore((s) => s.resetQuizSession);
+  const saveQuizSession = useAppStore((s) => s.saveQuizSession);
+  const activeSavedQuizId = useAppStore((s) => s.activeSavedQuizId);
+  const [submitting, setSubmitting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedToLibrary, setSavedToLibrary] = useState(false);
+  const [sessionResult, setSessionResult] = useState<QuizSessionResult | null>(null);
 
   if (!quizQuestions || quizQuestions.length === 0) {
     return <p className="text-sm text-muted-foreground text-center py-8">No quiz questions loaded.</p>;
   }
 
+  const allAnswered = quizQuestions.every((q) => quizAnswers[q.id] !== undefined);
   const question = quizQuestions[quizIndex] || quizQuestions[0];
   const answered = quizAnswers[question.id] !== undefined;
   const correct = quizAnswers[question.id] === question.correct;
 
+  async function submitQuizResults() {
+    if (!allAnswered || submitting) return;
+    setSubmitting(true);
+    try {
+      const answers = quizQuestions.map((q) => ({
+        questionId: q.id,
+        selectedAnswer: quizAnswers[q.id],
+        correct: quizAnswers[q.id] === q.correct,
+        topic: q.topic,
+      }));
+      const result = await apiRequest<QuizSessionResult>("/api/quiz/submit", {
+        method: "POST",
+        body: JSON.stringify({ topic: topic || question.topic, answers }),
+      });
+      setSessionResult(result);
+    } catch (e) {
+      console.warn("Quiz submit failed, showing local results.", e);
+      const total = quizQuestions.length;
+      const correctCount = quizQuestions.filter((q) => quizAnswers[q.id] === q.correct).length;
+      const wrongTopics = quizQuestions
+        .filter((q) => quizAnswers[q.id] !== q.correct)
+        .map((q) => q.topic);
+      const correctTopics = quizQuestions
+        .filter((q) => quizAnswers[q.id] === q.correct)
+        .map((q) => q.topic);
+      setSessionResult({
+        topic: topic || question.topic,
+        total,
+        correct: correctCount,
+        wrong: total - correctCount,
+        accuracy: Math.round((correctCount / total) * 100),
+        analysis: {
+          strongAreas: [...new Set(correctTopics.filter((t) => !wrongTopics.includes(t)))],
+          weakAreas: [...new Set(wrongTopics)],
+          conceptsMissed: [...new Set(wrongTopics)],
+          recommendedRevision: [...new Set(wrongTopics)].map((t) => `Review ${t} and practice examples`),
+        },
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function handleAnswer(index: number) {
     setQuizAnswer(question.id, index);
     quizStore.recordAttempt(question.id, question.topic, index, question.correct);
+  }
+
+  function handleReattempt() {
+    setSessionResult(null);
+    setSavedToLibrary(false);
+    resetQuizSession();
+  }
+
+  async function handleSaveQuiz() {
+    if (!sessionResult || saving) return;
+    setSaving(true);
+    try {
+      await saveQuizSession({
+        topic: sessionResult.topic,
+        questions: quizQuestions,
+        correct: sessionResult.correct,
+        total: sessionResult.total,
+        accuracy: sessionResult.accuracy,
+        analysis: sessionResult.analysis as unknown as Record<string, unknown>,
+        sessionId: activeSavedQuizId,
+      });
+      setSavedToLibrary(true);
+    } catch (e) {
+      console.warn("Failed to save quiz session.", e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const needsReattempt = sessionResult ? sessionResult.correct < 8 : false;
+
+  if (sessionResult) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-[var(--neuro-cyan)]/30 bg-[var(--neuro-cyan)]/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Quiz Results Summary</CardTitle>
+            <CardDescription className="text-xs">{sessionResult.topic}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-lg border border-border/40 bg-card p-3">
+                <p className="text-xs text-muted-foreground">Score</p>
+                <p className="text-lg font-bold">{sessionResult.correct}/{sessionResult.total}</p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-card p-3">
+                <p className="text-xs text-muted-foreground">Accuracy</p>
+                <p className="text-lg font-bold">{sessionResult.accuracy}%</p>
+              </div>
+              <div className="rounded-lg border border-[var(--neuro-green)]/30 bg-[var(--neuro-green)]/5 p-3">
+                <p className="text-xs text-muted-foreground">Correct</p>
+                <p className="text-lg font-bold text-[var(--neuro-green)]">{sessionResult.correct}</p>
+              </div>
+              <div className="rounded-lg border border-[var(--neuro-rose)]/30 bg-[var(--neuro-rose)]/5 p-3">
+                <p className="text-xs text-muted-foreground">Wrong</p>
+                <p className="text-lg font-bold text-[var(--neuro-rose)]">{sessionResult.wrong}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Performance Analysis</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs">
+            <div>
+              <p className="font-semibold text-[var(--neuro-green)] mb-1">Strong Areas</p>
+              <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                {(sessionResult.analysis.strongAreas.length ? sessionResult.analysis.strongAreas : ["General knowledge"]).map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-[var(--neuro-rose)] mb-1">Weak Areas</p>
+              <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                {(sessionResult.analysis.weakAreas.length ? sessionResult.analysis.weakAreas : ["None identified"]).map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-[var(--neuro-amber)] mb-1">Concepts Missed</p>
+              <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                {(sessionResult.analysis.conceptsMissed.length ? sessionResult.analysis.conceptsMissed : ["None"]).map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-primary mb-1">Recommended Revision</p>
+              <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                {sessionResult.analysis.recommendedRevision.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
+        {needsReattempt && (
+          <div className="rounded-lg border border-[var(--neuro-amber)]/40 bg-[var(--neuro-amber)]/10 p-3 text-xs text-[var(--neuro-amber)]">
+            You scored below 8/{sessionResult.total}. Reattempt this quiz to improve your mastery.
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <Button
+            className="w-full gap-2 neuro-glow-sm"
+            onClick={handleSaveQuiz}
+            disabled={saving || savedToLibrary}
+          >
+            <Save className="size-4" />
+            {savedToLibrary ? "Saved to Quiz Library" : saving ? "Saving..." : "Save Quiz"}
+          </Button>
+
+          {needsReattempt ? (
+            <Button variant="default" className="w-full gap-2" onClick={handleReattempt}>
+              <RotateCcw className="size-4" /> Reattempt Quiz
+            </Button>
+          ) : (
+            <Button variant="outline" className="w-full gap-2" onClick={handleReattempt}>
+              <RotateCcw className="size-4" /> Retake Quiz
+            </Button>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -173,6 +371,12 @@ function QuizViewer() {
           Next Question <ChevronRight className="size-4" />
         </Button>
       )}
+
+      {allAnswered && (
+        <Button className="w-full gap-2 neuro-glow-sm" onClick={submitQuizResults} disabled={submitting}>
+          {submitting ? "Analyzing results..." : "View Quiz Results"}
+        </Button>
+      )}
     </div>
   );
 }
@@ -184,12 +388,20 @@ export function RevisionCenter() {
   const [activeTab, setActiveTab] = useState("flashcards");
   const [quizTopic, setQuizTopic] = useState("");
   const [quizLoading, setQuizLoading] = useState(false);
+  const [flashcardTopic, setFlashcardTopic] = useState("");
+  const [flashcardLoading, setFlashcardLoading] = useState(false);
   const [flashcardTopicFilter, setFlashcardTopicFilter] = useState<string | "all">("all");
 
   const weakTopics = useAppStore((s) => s.weakTopics);
   const fetchDashboardData = useAppStore((s) => s.fetchDashboardData);
   const fetchFlashcards = useAppStore((s) => s.fetchFlashcards);
+  const fetchFlashcardsForTopic = useAppStore((s) => s.fetchFlashcardsForTopic);
   const fetchQuizQuestions = useAppStore((s) => s.fetchQuizQuestions);
+  const fetchSavedQuizzes = useAppStore((s) => s.fetchSavedQuizzes);
+  const loadSavedQuiz = useAppStore((s) => s.loadSavedQuiz);
+  const savedQuizzes = useAppStore((s) => s.savedQuizzes);
+  const resetQuizSession = useAppStore((s) => s.resetQuizSession);
+  const setActiveSavedQuizId = useAppStore((s) => s.setActiveSavedQuizId);
   const flashcards = useAppStore((s) => s.flashcards);
   const learningGoals = useAppStore((s) => s.learningGoals);
   const fetchLearningGoals = useAppStore((s) => s.fetchLearningGoals);
@@ -207,7 +419,8 @@ export function RevisionCenter() {
     fetchDashboardData();
     fetchFlashcards();
     fetchLearningGoals();
-  }, [fetchDashboardData, fetchFlashcards, fetchLearningGoals]);
+    fetchSavedQuizzes();
+  }, [fetchDashboardData, fetchFlashcards, fetchLearningGoals, fetchSavedQuizzes]);
 
   // Set initial selected goal and lecture if available
   useEffect(() => {
@@ -222,18 +435,30 @@ export function RevisionCenter() {
     }
   }, [lectures, selectedLectureId]);
 
-  // Voice agent opens quiz with a topic
   useEffect(() => {
-    const handler = (e: Event) => {
+    const quizHandler = (e: Event) => {
       const topic = (e as CustomEvent).detail?.topic;
       if (topic) {
         setQuizTopic(topic);
         setActiveTab("quiz");
+        resetQuizSession();
       }
     };
-    window.addEventListener("revision_quiz_topic", handler);
-    return () => window.removeEventListener("revision_quiz_topic", handler);
-  }, []);
+    const fcHandler = (e: Event) => {
+      const topic = (e as CustomEvent).detail?.topic;
+      if (topic) {
+        setFlashcardTopic(topic);
+        setFlashcardTopicFilter(topic);
+        setActiveTab("flashcards");
+      }
+    };
+    window.addEventListener("revision_quiz_topic", quizHandler);
+    window.addEventListener("revision_flashcard_topic", fcHandler);
+    return () => {
+      window.removeEventListener("revision_quiz_topic", quizHandler);
+      window.removeEventListener("revision_flashcard_topic", fcHandler);
+    };
+  }, [resetQuizSession]);
 
   const allTopics = Array.from(
     new Set([
@@ -249,16 +474,51 @@ export function RevisionCenter() {
           (fc) => fc.topic.toLowerCase().includes(flashcardTopicFilter.toLowerCase())
         );
 
+  async function handleStartSavedQuiz(sessionId: string, quizTopicName: string) {
+    setQuizTopic(quizTopicName);
+    setActiveTab("quiz");
+    resetQuizSession();
+    try {
+      await loadSavedQuiz(sessionId);
+    } catch (e) {
+      console.warn("Failed to load saved quiz.", e);
+    }
+  }
+
   async function handleGenerateQuiz(topic?: string) {
     const t = (topic || quizTopic || allTopics[0] || "General").trim();
     if (!t) return;
     setQuizLoading(true);
     setQuizTopic(t);
     setActiveTab("quiz");
+    setActiveSavedQuizId(null);
+    resetQuizSession();
+    agentRegistry.processing("quiz", `Generating quiz on ${t}...`, 72);
     try {
       await fetchQuizQuestions(t, { count: 10, forceRegenerate: true });
+      agentRegistry.complete("quiz", `Quiz ready on ${t}`);
+    } catch {
+      agentRegistry.idle("quiz", "Quiz generation failed");
     } finally {
       setQuizLoading(false);
+    }
+  }
+
+  async function handleGenerateFlashcards(topic?: string) {
+    const t = (topic || flashcardTopic || allTopics[0] || "General").trim();
+    if (!t) return;
+    setFlashcardLoading(true);
+    setFlashcardTopic(t);
+    setFlashcardTopicFilter(t);
+    setActiveTab("flashcards");
+    agentRegistry.processing("flashcard", `Generating flashcards on ${t}...`, 72);
+    try {
+      await fetchFlashcardsForTopic(t, { count: 15, forceRegenerate: true });
+      agentRegistry.complete("flashcard", `Flashcards ready on ${t}`);
+    } catch {
+      agentRegistry.idle("flashcard", "Flashcard generation failed");
+    } finally {
+      setFlashcardLoading(false);
     }
   }
 
@@ -409,9 +669,40 @@ export function RevisionCenter() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-semibold">Spaced Repetition</CardTitle>
                   <CardDescription className="text-xs">
-                    SM-2 algorithm · {filteredFlashcards.length} cards
+                    LLM-generated for any topic · {filteredFlashcards.length} cards
                     {flashcardTopicFilter !== "all" ? ` on ${flashcardTopicFilter}` : " total"}
                   </CardDescription>
+                  <div className="flex gap-2 pt-2 flex-wrap">
+                    <Input
+                      value={flashcardTopic}
+                      onChange={(e) => setFlashcardTopic(e.target.value)}
+                      placeholder="Topic e.g. Operating Systems, DBMS..."
+                      className="h-8 text-xs flex-1 min-w-[180px]"
+                    />
+                    <Button
+                      size="sm"
+                      className="text-xs h-8"
+                      disabled={flashcardLoading}
+                      onClick={() => handleGenerateFlashcards()}
+                    >
+                      {flashcardLoading ? "Generating..." : "Generate Flashcards"}
+                    </Button>
+                  </div>
+                  {allTopics.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {allTopics.slice(0, 6).map((t) => (
+                        <Button
+                          key={t}
+                          variant="outline"
+                          size="sm"
+                          className="text-[10px] h-6"
+                          onClick={() => handleGenerateFlashcards(t)}
+                        >
+                          Cards: {t}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                   {allTopics.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-2">
                       <Button
@@ -441,7 +732,7 @@ export function RevisionCenter() {
                     <FlashcardViewer cards={filteredFlashcards} />
                   ) : (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      No flashcards for this topic. Record a lecture to generate content-rich cards.
+                      No flashcards for this topic. Enter a topic above and generate flashcards — no lecture required.
                     </p>
                   )}
                 </CardContent>
@@ -487,8 +778,45 @@ export function RevisionCenter() {
                     </div>
                   )}
                 </CardHeader>
-                <CardContent>
-                  <QuizViewer />
+                <CardContent className="space-y-4">
+                  {savedQuizzes.length > 0 && (
+                    <div className="space-y-2 pb-4 border-b border-border/40">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Saved Quizzes ({savedQuizzes.length})
+                      </p>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {savedQuizzes.map((sq) => (
+                          <div
+                            key={sq.id}
+                            className={cn(
+                              "flex items-center justify-between gap-2 rounded-lg border p-2.5",
+                              sq.needsReattempt
+                                ? "border-[var(--neuro-amber)]/40 bg-[var(--neuro-amber)]/5"
+                                : "border-border/40 bg-muted/10"
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{sq.title}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                Score: {sq.lastScore}/{sq.totalQuestions} · Best: {sq.bestScore}/{sq.totalQuestions}
+                                {sq.needsReattempt && " · Needs reattempt"}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant={sq.needsReattempt ? "default" : "outline"}
+                              className="text-[10px] h-7 shrink-0 gap-1"
+                              onClick={() => handleStartSavedQuiz(sq.id, sq.topic)}
+                            >
+                              <Play className="size-3" />
+                              {sq.needsReattempt ? "Reattempt" : "Retake"}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <QuizViewer topic={quizTopic} />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -530,12 +858,12 @@ export function RevisionCenter() {
                       {selectedLecture.summary && (
                         <div className="p-3 bg-muted/30 border border-border/40 rounded-lg">
                           <p className="text-xs font-semibold mb-1 text-primary">Summary Concept</p>
-                          <p className="text-xs text-muted-foreground leading-relaxed">{selectedLecture.summary}</p>
+                          <MarkdownContent content={selectedLecture.summary} className="text-xs" />
                         </div>
                       )}
                       {selectedLecture.notes ? (
-                        <div className="prose prose-sm prose-invert max-w-none text-xs leading-relaxed space-y-2 whitespace-pre-wrap border-t border-border/30 pt-4">
-                          {selectedLecture.notes}
+                        <div className="border-t border-border/30 pt-4">
+                          <MarkdownContent content={selectedLecture.notes} className="text-xs" />
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">No notes compiled for this lecture log.</p>
@@ -562,8 +890,8 @@ export function RevisionCenter() {
                         <Badge className="text-[10px]">{selectedGoal.progress}% complete</Badge>
                       </div>
                       {selectedGoal.roadmapReport ? (
-                        <div className="p-4 rounded-lg bg-muted/20 border border-border/40 text-xs whitespace-pre-wrap leading-relaxed">
-                          {selectedGoal.roadmapReport}
+                        <div className="p-4 rounded-lg bg-muted/20 border border-border/40 text-xs">
+                          <MarkdownContent content={selectedGoal.roadmapReport} className="text-xs" />
                         </div>
                       ) : (
                         <div className="text-xs text-muted-foreground py-4 text-center">

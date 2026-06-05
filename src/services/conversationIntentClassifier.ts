@@ -42,13 +42,17 @@ const intentPatterns: Record<ConversationIntent, RegExp[]> = {
     /how\s+am\s+i\s+doing/i,
   ],
   QUIZ_REQUEST: [
-    /(?:take|start|begin|open)\s+(?:a\s+)?quiz/i,
-    /quiz\s+me/i,
-    /test\s+me/i,
+    /(?:generate|create|make)\s+(?:a\s+)?quiz\s+(?:on|about|for)/i,
+    /(?:generate|create|make)\s+(?:a\s+)?quiz\b/i,
+    /(?:take|start|begin|open)\s+(?:a\s+)?quiz(?:\s+(?:on|about|for))?/i,
+    /quiz\s+me\s+(?:on|about)/i,
+    /test\s+me\s+(?:on|about)/i,
   ],
   FLASHCARD_REQUEST: [
+    /(?:create|generate|make)\s+(?:a\s+)?flashcards?\s+(?:on|about|for)/i,
+    /(?:create|generate|make)\s+(?:a\s+)?flashcards?\b/i,
     /(?:create|generate|make|show)\s+(?:some\s+)?flashcards/i,
-    /flashcards\s+/i,
+    /flashcards?\s+(?:on|about|for)/i,
   ],
   NOTES_REQUEST: [
     /(?:generate|make|compile|write|create)\s+(?:study\s+)?notes/i,
@@ -66,8 +70,9 @@ const intentPatterns: Record<ConversationIntent, RegExp[]> = {
 
 const entityExtractionPatterns = {
   topic: [
-    /(?:on|about|in|study|explain)\s+([A-Za-z0-9\s#\+\-]+)(?:\s|$|\.|\?|,)/i,
-    /(?:quiz|test|teach)\s+([A-Za-z0-9\s#\+\-]+)(?:\s|$|\.|\?|,)/i,
+    /(?:generate|create|make)\s+(?:a\s+)?(?:quiz|flashcards?)\s+(?:on|about|for)\s+([A-Za-z0-9\s#\+\-\.]+?)(?:\s*$|\.|\?|,)/i,
+    /(?:on|about|for|in|study|explain)\s+([A-Za-z0-9\s#\+\-\.]+?)(?:\s*$|\.|\?|,)/i,
+    /(?:quiz|test|flashcards?)\s+(?:on|about|for)\s+([A-Za-z0-9\s#\+\-\.]+?)(?:\s*$|\.|\?|,)/i,
   ],
   subject: [
     /(?:my\s+)?(DBMS|Operating System|OS|Data Structures|Algorithms|Computer Networks?|Database)/i,
@@ -97,6 +102,22 @@ function extractEntities(transcript: string, intent: ConversationIntent): Record
   }
 
   return entities;
+}
+
+/** True when the utterance is only a greeting or casual opener — never navigate. */
+export function isGreetingTranscript(transcript: string): boolean {
+  const normalized = transcript.toLowerCase().trim();
+  if (!normalized) return false;
+
+  const greetingOnly =
+    /^(?:hello|hi|hey|hiya|howdy|greetings|yo|sup)(?:\s+there|\s+everyone|\s+again)?[!.,?\s]*$/i.test(normalized) ||
+    /^good\s+(?:morning|afternoon|evening|day)[!.,?\s]*$/i.test(normalized) ||
+    /^how\s+are\s+you(?:\s+doing)?[!.,?\s]*$/i.test(normalized) ||
+    /^what(?:'s|\s+is)\s+up[!.,?\s]*$/i.test(normalized);
+
+  if (greetingOnly) return true;
+
+  return intentPatterns.GREETING.some((pattern) => pattern.test(normalized));
 }
 
 export function classifyConversationIntent(transcript: string): ConversationClassificationResult {

@@ -50,7 +50,7 @@ class AgentRegistry {
     this.heartbeatInterval = setInterval(() => {
       const now = Date.now();
       this.agents.forEach((agent, id) => {
-        if (agent.status === "complete" && now - agent.last_activity > 5000) {
+        if (agent.status === "complete" && now - agent.last_activity > 8000) {
           this.setAgent(id, { status: "idle", current_task: agent.healthy ? `Ready (${agent.provider}/${agent.model})` : "Disabled", progress: 0 });
         }
       });
@@ -125,7 +125,26 @@ class AgentRegistry {
   }
 
   resolveAgentId(executedName: string): string {
-    const n = executedName.toLowerCase();
+    const n = (executedName || "").toLowerCase().replace(/\s+/g, "_");
+
+    const intentMap: Record<string, string> = {
+      lecture_start: "lecture",
+      lecture_stop: "lecture",
+      flashcard_create: "flashcard",
+      quiz_request: "quiz",
+      tutoring_request: "tutor",
+      explanation_request: "tutor",
+      educational_question: "tutor",
+      analytics_query: "analytics",
+      progress_query: "analytics",
+      weak_areas_query: "analytics",
+      navigate_graph: "knowledge-graph",
+      revision_start: "flashcard",
+      roadmap_create: "orchestrator",
+      goal_set: "orchestrator",
+    };
+    if (intentMap[n]) return intentMap[n];
+
     if (n.includes("lecture")) return "lecture";
     if (n.includes("flashcard")) return "flashcard";
     if (n.includes("quiz")) return "quiz";
@@ -135,6 +154,22 @@ class AgentRegistry {
     if (n.includes("graph") || n.includes("knowledge")) return "knowledge-graph";
     if (n.includes("navigation")) return "orchestrator";
     return "orchestrator";
+  }
+
+  resolveAgentFromAction(actionName: string): string | null {
+    const map: Record<string, string> = {
+      start_recording: "lecture",
+      start_lecture: "lecture",
+      stop_recording: "notes",
+      stop_lecture: "notes",
+      open_quiz: "quiz",
+      open_flashcards: "flashcard",
+      display_summary: "notes",
+      navigate_tutor: "tutor",
+      navigate_analytics: "analytics",
+      "navigate_knowledge-graph": "knowledge-graph",
+    };
+    return map[actionName] ?? null;
   }
 
   handleBackendRegistry(agents: Array<{

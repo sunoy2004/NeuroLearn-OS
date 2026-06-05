@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
@@ -14,8 +14,11 @@ from backend.services.transcript_processor import TranscriptProcessor
 from backend.services.graph_service import build_graph_from_transcript
 from backend.services.language_utils import resolve_language
 from backend.services import qdrant_service
+from backend.services.speech_service import transcribe_media_file, ALLOWED_UPLOAD_EXTENSIONS
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500MB practical server limit
 
 class LectureUploadRequest(BaseModel):
     title: str
@@ -24,6 +27,25 @@ class LectureUploadRequest(BaseModel):
     transcript: str
     lecture_id: str | None = None
     language: str | None = "auto"
+
+class LectureRenameRequest(BaseModel):
+    title: str
+
+class LectureSaveRequest(BaseModel):
+    title: str
+    subject: str
+    duration: int
+    transcript: str
+    lecture_id: str
+    language: str | None = "auto"
+    category: str = "General"
+    concepts: list = []
+    concepts_details: list = []
+    relationships: list = []
+    summary: str = ""
+    notes: str = ""
+    flashcards: list = []
+    quizzes: list = []
 
 class TranscriptChunkRequest(BaseModel):
     lecture_id: str
@@ -61,210 +83,410 @@ async def get_transcript_chunks(lecture_id: str, db: Session = Depends(get_db)):
     ]
 
 
+def _persist_lecture_result(
+    db: Session,
+    lecture_id: str,
+    user_title: str,
+    subject: str,
+    duration: int,
+    transcript: str,
+    result,
+) -> dict:
+    """Persist a processed lecture using the user-provided title."""
+    db_lecture = DBLecture(
+        id=lecture_id,
+        title=user_title.strip(),
+        subject=subject,
+        duration=duration,
+        concept_count=len(result.concepts),
+        flashcard_count=len(result.flashcards),
+        topics=result.concepts,
+        summary=result.summary,
+        notes=result.notes,
+        language=result.language,
+        category=result.category,
+        keywords_json=json.dumps(result.concepts),
+    )
+    db.add(db_lecture)
+
+    # Concepts — dynamic graph from transcript
+    existing_map = {c.id: {"mastery": c.mastery, "retention": c.retention} for c in db.query(DBConcept).all()}
+    graph_nodes = build_graph_from_transcript(transcript, subject, existing_map, result.relationships)
+
+    # Create lookup map of detailed concepts from LLM extraction stage
+    details_map = {}
+    for item in result.concepts_details:
+        if isinstance(item, dict) and "concept" in item:
+            details_map[item["concept"].lower()] = item
+
+    for node in graph_nodes:
+        detail = details_map.get(node["name"].lower())
+        definition = detail.get("definition") if detail else node.get("definition")
+        importance = detail.get("importance") if detail else node.get("importance", "Medium")
+        related = detail.get("related_concepts") if detail else node.get("related_concepts", [])
+
+        db_concept = db.query(DBConcept).filter(DBConcept.id == node["id"]).first()
+        if not db_concept:
+            db_concept = DBConcept(
+                id=node["id"],
+                name=node["name"],
+                subject=node["subject"],
+                mastery=node["mastery"],
+                retention=node["retention"],
+                connections=node["connections"],
+                definition=definition,
+                importance=importance,
+                related_concepts_json=json.dumps(related)
+            )
+            db.add(db_concept)
+        else:
+            existing_connections = set(db_concept.connections)
+            for conn in node["connections"]:
+                existing_connections.add(conn)
+            db_concept.connections = list(existing_connections)
+            db_concept.mastery = node["mastery"]
+            db_concept.retention = node["retention"]
+            if definition:
+                db_concept.definition = definition
+            if importance:
+                db_concept.importance = importance
+            if related:
+                db_concept.related_concepts_json = json.dumps(related)
+            db.add(db_concept)
+
+    # Fallback/merge: use result concepts to enrich DB concepts
+    for name in result.concepts:
+        concept_id = f"con_{name.lower().replace(' ', '_').replace('+', 'plus')}"
+        db_concept = db.query(DBConcept).filter(DBConcept.id == concept_id).first()
+        connections = [
+            f"con_{c.lower().replace(' ', '_').replace('+', 'plus')}"
+            for c in result.concepts if c != name
+        ]
+        detail = details_map.get(name.lower())
+        definition = detail.get("definition") if detail else f"Core concept representing {name} within {subject}."
+        importance = detail.get("importance") if detail else "Medium"
+        related = detail.get("related_concepts") if detail else []
+
+        if not db_concept:
+            db_concept = DBConcept(
+                id=concept_id, name=name, subject=subject,
+                mastery=50.0, retention=60.0, connections=connections,
+                definition=definition, importance=importance,
+                related_concepts_json=json.dumps(related)
+            )
+            db.add(db_concept)
+        else:
+            existing_connections = set(db_concept.connections)
+            for conn in connections:
+                existing_connections.add(conn)
+            db_concept.connections = list(existing_connections)
+            if definition:
+                db_concept.definition = definition
+            if importance:
+                db_concept.importance = importance
+            if related:
+                db_concept.related_concepts_json = json.dumps(related)
+            db.add(db_concept)
+
+    # Flashcards
+    for fc in result.flashcards:
+        fc_id = fc.get("id") or f"fc_{uuid.uuid4().hex[:8]}"
+        db_fc = DBFlashcard(
+            id=fc_id,
+            front=fc.get("front", ""),
+            back=fc.get("back", ""),
+            topic=fc.get("topic", result.concepts[0] if result.concepts else "General"),
+            subject=subject
+        )
+        db.add(db_fc)
+
+    # Quizzes
+    for q in result.quizzes:
+        db_q = DBQuizQuestion(
+            id=f"q_{uuid.uuid4().hex[:8]}",
+            question=q.get("question", ""),
+            options=q.get("options", []),
+            correct=q.get("correct", 0),
+            explanation=q.get("explanation", ""),
+            topic=q.get("topic", result.concepts[0] if result.concepts else "General"),
+            difficulty=q.get("difficulty", "Medium"),
+            question_type=q.get("question_type", "MCQ")
+        )
+        db.add(db_q)
+
+    # Profile Update
+    profile = db.query(DBUserProfile).filter(DBUserProfile.id == "demo-user").first()
+    if profile:
+        profile.total_hours += max(1, int(duration))
+        all_concepts_count = db.query(DBConcept).count()
+        profile.concepts_mastered = all_concepts_count
+        profile.concepts_detected = all_concepts_count
+
+        try:
+            lprof = json.loads(profile.learning_profile_json or "{}")
+        except Exception:
+            lprof = {}
+
+        if "weak_topics" not in lprof: lprof["weak_topics"] = []
+        if "strong_topics" not in lprof: lprof["strong_topics"] = []
+        if "quiz_scores" not in lprof: lprof["quiz_scores"] = []
+        if "lecture_history" not in lprof: lprof["lecture_history"] = []
+        if "study_time" not in lprof: lprof["study_time"] = 0
+
+        lprof["study_time"] += max(1, int(duration))
+        lprof["lecture_history"].append({
+            "lecture_id": lecture_id,
+            "title": user_title.strip(),
+            "subject": subject,
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+        concepts_in_db = db.query(DBConcept).all()
+        lprof["weak_topics"] = [c.name for c in concepts_in_db if c.mastery < 65.0]
+        lprof["strong_topics"] = [c.name for c in concepts_in_db if c.mastery >= 75.0]
+
+        profile.learning_profile_json = json.dumps(lprof)
+        db.add(profile)
+
+    db.commit()
+
+    try:
+        qdrant_service.store_memory(
+            collection_name="lecture_memory_collection",
+            payload={
+                "lectureId": lecture_id,
+                "title": db_lecture.title,
+                "subject": subject,
+                "concepts": result.concepts,
+                "summary": result.summary[:1000],
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+            text_to_embed=f"{db_lecture.title}. {result.summary} {' '.join(result.concepts)}",
+        )
+    except Exception as qe:
+        print(f"[Analytics] Qdrant lecture memory store failed: {qe}")
+
+    return {
+        "status": "success",
+        "lectureId": lecture_id,
+        "title": db_lecture.title,
+        "concepts": result.concepts,
+        "summary": result.summary,
+        "notes": result.notes,
+        "flashcardCount": len(result.flashcards),
+        "quizCount": len(result.quizzes),
+    }
+
+
+@router.post("/lectures/transcribe-upload")
+async def transcribe_lecture_upload(file: UploadFile = File(...)):
+    """Transcribe an uploaded audio/video lecture file (MP3, MP4, WAV, M4A)."""
+    import os
+
+    filename = file.filename or "upload.mp3"
+    ext = os.path.splitext(filename.lower())[1]
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+
+    try:
+        transcript, duration_seconds = await transcribe_media_file(content, filename)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {ex}")
+
+    if not transcript or len(transcript.strip()) < 10:
+        raise HTTPException(
+            status_code=422,
+            detail="No speech detected in the uploaded file. Try a clearer recording.",
+        )
+
+    lecture_id = f"lec_{uuid.uuid4().hex[:8]}"
+    duration_minutes = max(1, int((duration_seconds or max(60, len(transcript.split()) * 0.4)) / 60))
+
+    return {
+        "status": "transcribed",
+        "lectureId": lecture_id,
+        "transcript": transcript.strip(),
+        "durationSeconds": duration_seconds,
+        "durationMinutes": duration_minutes,
+        "filename": filename,
+        "wordCount": len(transcript.split()),
+    }
+
+
+@router.post("/lectures/process")
+async def process_lecture_only(request: LectureUploadRequest):
+    """Process transcript into notes/flashcards/quiz — does NOT save to library."""
+    try:
+        if not request.transcript or len(request.transcript.strip()) < 10:
+            raise HTTPException(status_code=400, detail="Transcript too short to process")
+
+        lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
+        processor = TranscriptProcessor()
+        result = processor.process(
+            request.transcript, "Pending", request.subject, request.language,
+            user_id="demo-user", lecture_id=lecture_id,
+        )
+        return {
+            "status": "processed",
+            "lectureId": lecture_id,
+            "title": result.title,
+            "category": result.category,
+            "concepts": result.concepts,
+            "concepts_details": result.concepts_details,
+            "relationships": result.relationships,
+            "summary": result.summary,
+            "notes": result.notes,
+            "flashcards": result.flashcards,
+            "quizzes": result.quizzes,
+            "flashcardCount": len(result.flashcards),
+            "quizCount": len(result.quizzes),
+            "language": result.language,
+        }
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.post("/lectures/save")
+async def save_processed_lecture(request: LectureSaveRequest, db: Session = Depends(get_db)):
+    """Save a processed lecture to the library with a user-defined name."""
+    try:
+        if not request.title or not request.title.strip():
+            raise HTTPException(status_code=400, detail="Lecture name is required")
+        if not request.transcript or len(request.transcript.strip()) < 10:
+            raise HTTPException(status_code=400, detail="Transcript too short to save")
+
+        from backend.services.transcript_processor import TranscriptProcessingResult
+        result = TranscriptProcessingResult(
+            title=request.title.strip(),
+            category=request.category,
+            concepts=request.concepts,
+            concepts_details=request.concepts_details,
+            relationships=request.relationships,
+            summary=request.summary,
+            notes=request.notes,
+            flashcards=request.flashcards,
+            quizzes=request.quizzes,
+            language=request.language or "en",
+        )
+        return _persist_lecture_result(
+            db, request.lecture_id, request.title.strip(),
+            request.subject, request.duration, request.transcript, result,
+        )
+    except HTTPException:
+        raise
+    except Exception as ex:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.patch("/lectures/{lecture_id}")
+async def rename_lecture(lecture_id: str, request: LectureRenameRequest, db: Session = Depends(get_db)):
+    """Rename a saved lecture in the library."""
+    try:
+        title = (request.title or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Lecture name is required")
+
+        lecture = db.query(DBLecture).filter(DBLecture.id == lecture_id).first()
+        if not lecture:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+
+        lecture.title = title
+        db.add(lecture)
+
+        profile = db.query(DBUserProfile).filter(DBUserProfile.id == "demo-user").first()
+        if profile and profile.learning_profile_json:
+            try:
+                lprof = json.loads(profile.learning_profile_json)
+                for entry in lprof.get("lecture_history", []):
+                    if entry.get("lecture_id") == lecture_id:
+                        entry["title"] = title
+                profile.learning_profile_json = json.dumps(lprof)
+                db.add(profile)
+            except Exception:
+                pass
+
+        db.commit()
+        return {"status": "ok", "lectureId": lecture_id, "title": title}
+    except HTTPException:
+        raise
+    except Exception as ex:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.delete("/lectures/{lecture_id}")
+async def delete_lecture(lecture_id: str, db: Session = Depends(get_db)):
+    """Delete a lecture and its transcript chunks from the library."""
+    try:
+        lecture = db.query(DBLecture).filter(DBLecture.id == lecture_id).first()
+        if not lecture:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+
+        db.query(DBTranscriptChunk).filter(DBTranscriptChunk.lecture_id == lecture_id).delete()
+        db.delete(lecture)
+
+        profile = db.query(DBUserProfile).filter(DBUserProfile.id == "demo-user").first()
+        if profile:
+            if profile.learning_profile_json:
+                try:
+                    lprof = json.loads(profile.learning_profile_json)
+                    lprof["lecture_history"] = [
+                        e for e in lprof.get("lecture_history", [])
+                        if e.get("lecture_id") != lecture_id
+                    ]
+                    profile.learning_profile_json = json.dumps(lprof)
+                except Exception:
+                    pass
+            profile.total_hours = max(0, profile.total_hours - max(1, int(lecture.duration or 0)))
+            db.add(profile)
+
+        db.commit()
+        return {"status": "deleted", "lectureId": lecture_id}
+    except HTTPException:
+        raise
+    except Exception as ex:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @router.post("/lectures")
 async def save_and_process_lecture(request: LectureUploadRequest, db: Session = Depends(get_db)):
-    """Receives lecture transcripts, extracts real content, and persists to relational tables."""
+    """Legacy: process and save in one step (used when title already provided)."""
     try:
         if not request.transcript or len(request.transcript.strip()) < 10:
             raise HTTPException(status_code=400, detail="Transcript too short to process")
 
         lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
 
-        # Process the transcript using the unified intelligence pipeline
         processor = TranscriptProcessor()
         result = processor.process(
             request.transcript, request.title, request.subject, request.language,
             user_id="demo-user", lecture_id=lecture_id
         )
 
-        db_lecture = DBLecture(
-            id=lecture_id,
-            title=result.title,
-            subject=request.subject,
-            duration=request.duration,
-            concept_count=len(result.concepts),
-            flashcard_count=len(result.flashcards),
-            topics=result.concepts,
-            summary=result.summary,
-            notes=result.notes,
-            language=result.language,
-            category=result.category,
-            keywords_json=json.dumps(result.concepts),
+        save_title = request.title.strip() if request.title and request.title != "Auto-detect" else result.title
+        return _persist_lecture_result(
+            db, lecture_id, save_title, request.subject, request.duration, request.transcript, result,
         )
-        db.add(db_lecture)
-
-        # Concepts — dynamic graph from transcript
-        existing_map = {c.id: {"mastery": c.mastery, "retention": c.retention} for c in db.query(DBConcept).all()}
-        graph_nodes = build_graph_from_transcript(request.transcript, request.subject, existing_map, result.relationships)
-
-        # Create lookup map of detailed concepts from LLM extraction stage
-        details_map = {}
-        for item in result.concepts_details:
-            if isinstance(item, dict) and "concept" in item:
-                details_map[item["concept"].lower()] = item
-
-        for node in graph_nodes:
-            detail = details_map.get(node["name"].lower())
-            definition = detail.get("definition") if detail else node.get("definition")
-            importance = detail.get("importance") if detail else node.get("importance", "Medium")
-            related = detail.get("related_concepts") if detail else node.get("related_concepts", [])
-
-            db_concept = db.query(DBConcept).filter(DBConcept.id == node["id"]).first()
-            if not db_concept:
-                db_concept = DBConcept(
-                    id=node["id"],
-                    name=node["name"],
-                    subject=node["subject"],
-                    mastery=node["mastery"],
-                    retention=node["retention"],
-                    connections=node["connections"],
-                    definition=definition,
-                    importance=importance,
-                    related_concepts_json=json.dumps(related)
-                )
-                db.add(db_concept)
-            else:
-                existing_connections = set(db_concept.connections)
-                for conn in node["connections"]:
-                    existing_connections.add(conn)
-                db_concept.connections = list(existing_connections)
-                db_concept.mastery = node["mastery"]
-                db_concept.retention = node["retention"]
-                if definition:
-                    db_concept.definition = definition
-                if importance:
-                    db_concept.importance = importance
-                if related:
-                    db_concept.related_concepts_json = json.dumps(related)
-                db.add(db_concept)
-
-        # Fallback/merge: use result concepts to enrich DB concepts
-        for name in result.concepts:
-            concept_id = f"con_{name.lower().replace(' ', '_').replace('+', 'plus')}"
-            db_concept = db.query(DBConcept).filter(DBConcept.id == concept_id).first()
-            connections = [
-                f"con_{c.lower().replace(' ', '_').replace('+', 'plus')}"
-                for c in result.concepts if c != name
-            ]
-            detail = details_map.get(name.lower())
-            definition = detail.get("definition") if detail else f"Core concept representing {name} within {request.subject}."
-            importance = detail.get("importance") if detail else "Medium"
-            related = detail.get("related_concepts") if detail else []
-
-            if not db_concept:
-                db_concept = DBConcept(
-                    id=concept_id, name=name, subject=request.subject,
-                    mastery=50.0, retention=60.0, connections=connections,
-                    definition=definition, importance=importance,
-                    related_concepts_json=json.dumps(related)
-                )
-                db.add(db_concept)
-            else:
-                existing_connections = set(db_concept.connections)
-                for conn in connections:
-                    existing_connections.add(conn)
-                db_concept.connections = list(existing_connections)
-                if definition:
-                    db_concept.definition = definition
-                if importance:
-                    db_concept.importance = importance
-                if related:
-                    db_concept.related_concepts_json = json.dumps(related)
-                db.add(db_concept)
-
-        # Flashcards
-        for fc in result.flashcards:
-            fc_id = f"fc_{uuid.uuid4().hex[:8]}"
-            db_fc = DBFlashcard(
-                id=fc_id,
-                front=fc.get("front", ""),
-                back=fc.get("back", ""),
-                topic=fc.get("topic", result.concepts[0] if result.concepts else "General"),
-                subject=request.subject
-            )
-            db.add(db_fc)
-
-        # Quizzes
-        for q in result.quizzes:
-            db_q = DBQuizQuestion(
-                id=f"q_{uuid.uuid4().hex[:8]}",
-                question=q.get("question", ""),
-                options=q.get("options", []),
-                correct=q.get("correct", 0),
-                explanation=q.get("explanation", ""),
-                topic=q.get("topic", result.concepts[0] if result.concepts else "General"),
-                difficulty=q.get("difficulty", "Medium"),
-                question_type=q.get("question_type", "MCQ")
-            )
-            db.add(db_q)
-
-        # Profile Update
-        profile = db.query(DBUserProfile).filter(DBUserProfile.id == "demo-user").first()
-        if profile:
-            profile.total_hours += max(1, int(request.duration))
-            # Track all detected concepts in knowledge graph dynamically
-            all_concepts_count = db.query(DBConcept).count()
-            profile.concepts_mastered = all_concepts_count
-            profile.concepts_detected = all_concepts_count
-
-            # Initialize / update learning profile JSON history
-            try:
-                lprof = json.loads(profile.learning_profile_json or "{}")
-            except Exception:
-                lprof = {}
-
-            if "weak_topics" not in lprof: lprof["weak_topics"] = []
-            if "strong_topics" not in lprof: lprof["strong_topics"] = []
-            if "quiz_scores" not in lprof: lprof["quiz_scores"] = []
-            if "lecture_history" not in lprof: lprof["lecture_history"] = []
-            if "study_time" not in lprof: lprof["study_time"] = 0
-
-            lprof["study_time"] += max(1, int(request.duration))
-            lprof["lecture_history"].append({
-                "lecture_id": lecture_id,
-                "title": result.title,
-                "subject": request.subject,
-                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            })
-
-            # Update weak/strong topics dynamically
-            concepts_in_db = db.query(DBConcept).all()
-            lprof["weak_topics"] = [c.name for c in concepts_in_db if c.mastery < 65.0]
-            lprof["strong_topics"] = [c.name for c in concepts_in_db if c.mastery >= 75.0]
-
-            profile.learning_profile_json = json.dumps(lprof)
-            db.add(profile)
-
-        # Sync/Commit DB
-        db.commit()
-
-        # Store lecture memory in Qdrant for semantic retrieval
-        try:
-            qdrant_service.store_memory(
-                collection_name="lecture_memory_collection",
-                payload={
-                    "lectureId": lecture_id,
-                    "title": db_lecture.title,
-                    "subject": request.subject,
-                    "concepts": result.concepts,
-                    "summary": result.summary[:1000],
-                    "timestamp": datetime.utcnow().isoformat(),
-                },
-                text_to_embed=f"{db_lecture.title}. {result.summary} {' '.join(result.concepts)}",
-            )
-        except Exception as qe:
-            print(f"[Analytics] Qdrant lecture memory store failed: {qe}")
-
-        return {
-            "status": "success",
-            "lectureId": lecture_id,
-            "title": db_lecture.title,
-            "concepts": result.concepts,
-            "summary": result.summary,
-            "notes": result.notes,
-            "flashcardCount": len(result.flashcards),
-            "quizCount": len(result.quizzes)
-        }
+    except HTTPException:
+        raise
     except Exception as ex:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(ex))

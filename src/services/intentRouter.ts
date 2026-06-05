@@ -11,6 +11,20 @@ export interface RoutingResult {
 /**
  * Route intent to appropriate frontend pages and actions.
  */
+function extractTopicFromTranscript(transcript: string, kind: "quiz" | "flashcard"): string | null {
+  const patterns = [
+    new RegExp(`(?:generate|create|make)\\s+(?:a\\s+)?${kind}s?\\s+(?:on|about|for)\\s+(.+)`, "i"),
+    new RegExp(`${kind}s?\\s+(?:on|about|for)\\s+(.+)`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = transcript.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim().replace(/[.!?]+$/, "");
+    }
+  }
+  return null;
+}
+
 export function routeIntent(transcript: string): RoutingResult {
   const classification = classifyConversationIntent(transcript);
   const intent = classification.intent;
@@ -22,12 +36,15 @@ export function routeIntent(transcript: string): RoutingResult {
 
   switch (intent) {
     case "GREETING":
-      store.setPage("tutor");
+      // Respond in place — no navigation for casual greetings
       handled = true;
       break;
 
     case "EDUCATIONAL_DISCUSSION":
-      store.setPage("tutor");
+      // Only navigate when user explicitly asks to open tutor / study space
+      if (/open\s+(the\s+)?(ai\s+)?tutor|go\s+to\s+tutor|take\s+me\s+to\s+tutor/i.test(transcript)) {
+        store.setPage("tutor");
+      }
       handled = true;
       break;
 
@@ -53,15 +70,27 @@ export function routeIntent(transcript: string): RoutingResult {
       }
       break;
 
-    case "QUIZ_REQUEST":
+    case "QUIZ_REQUEST": {
       store.setPage("revision");
-      handled = executeAction("open_quiz", { topic: classification.entities.topic || "General" });
+      const quizTopic = classification.entities.topic || extractTopicFromTranscript(transcript, "quiz");
+      if (!quizTopic) {
+        handled = true;
+        break;
+      }
+      handled = executeAction("open_quiz", { topic: quizTopic });
       break;
+    }
 
-    case "FLASHCARD_REQUEST":
+    case "FLASHCARD_REQUEST": {
       store.setPage("revision");
-      handled = true;
+      const fcTopic = classification.entities.topic || extractTopicFromTranscript(transcript, "flashcard");
+      if (!fcTopic) {
+        handled = true;
+        break;
+      }
+      handled = executeAction("open_flashcards", { topic: fcTopic });
       break;
+    }
 
     case "NOTES_REQUEST":
       store.setPage("lecture-studio");

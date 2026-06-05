@@ -150,6 +150,120 @@ def _generate_quiz_via_quiz_agent(topic: str, count: int, local_context: str) ->
         return []
 
 
+FLASHCARD_SYSTEM = """You are the Flashcard Generation Agent for NeuroLearn OS.
+
+Generate high-quality spaced-repetition flashcards for ANY academic topic using your expert knowledge.
+The student may request topics NOT in their lecture database — still produce excellent cards.
+
+Card types to mix: Definition, Concept, Application, Scenario, Comparison, Exam Preparation, Recall.
+
+Respond ONLY with a raw JSON array (no markdown fences):
+[{"front": string, "back": string, "topic": string, "difficulty": "beginner"|"intermediate"|"advanced"}]"""
+
+
+def _parse_flashcard_json(raw: str) -> List[Dict[str, Any]]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(_clean_json(raw.strip()))
+    except Exception:
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(raw[start : end + 1])
+            except Exception:
+                return []
+        else:
+            return []
+
+    if isinstance(data, dict):
+        if "flashcards" in data:
+            data = data["flashcards"]
+        elif "cards" in data:
+            data = data["cards"]
+        elif "front" in data:
+            data = [data]
+        else:
+            return []
+
+    if not isinstance(data, list):
+        return []
+
+    valid = []
+    for item in data:
+        if not isinstance(item, dict) or not item.get("front") or not item.get("back"):
+            continue
+        valid.append({
+            "front": item["front"].strip(),
+            "back": item["back"].strip(),
+            "topic": item.get("topic", "").strip() or "General",
+            "difficulty": item.get("difficulty", "intermediate"),
+        })
+    return valid
+
+
+def _generate_flashcards_via_flashcard_agent(topic: str, count: int, local_context: str) -> List[Dict[str, Any]]:
+    try:
+        from agent_service.providers.agent_provider_factory import get_agent_llm
+        from agent_service.agents.flashcard_agent import FlashcardAgent
+
+        agent = FlashcardAgent(get_agent_llm("flashcard"))
+        return agent.generate_cards(
+            transcript=local_context or f"Academic topic for flashcard generation: {topic}",
+            summary=f"Study topic: {topic}",
+            notes=local_context,
+            concepts=[{
+                "concept": topic,
+                "definition": f"Academic subject area: {topic}",
+                "importance": "High",
+                "related_concepts": [],
+            }],
+            lecture_category=topic,
+            lecture_tags=[topic],
+        )
+    except Exception as e:
+        print(f"[LLMStudy] FlashcardAgent fallback failed: {e}")
+        return []
+
+
+def generate_flashcards_open_world(
+    topic: str,
+    count: int = 15,
+    local_context: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Generate flashcards from LLM knowledge — DB content is optional enrichment only."""
+    topic_clean = (topic or "General").strip()
+    count = max(10, min(count, 30))
+
+    context_block = ""
+    if local_context and len(local_context.strip()) > 50:
+        context_block = (
+            f"\n\nOptional notes from student recordings (enrich if relevant):\n{local_context[:5000]}"
+        )
+
+    user_prompt = (
+        f"Generate exactly {count} flashcards about: **{topic_clean}**\n"
+        f"Use your full expert knowledge. Mix beginner, intermediate, and advanced difficulties.\n"
+        f"Make fronts specific and backs educational — no generic placeholders.{context_block}"
+    )
+
+    api_key, agent_id = get_agent_lyzr_credentials("FLASHCARD")
+    if is_lyzr_configured(api_key, agent_id):
+        try:
+            raw = lyzr_agent_execute("FLASHCARD", "Flashcard Agent", FLASHCARD_SYSTEM, user_prompt)
+            parsed = _parse_flashcard_json(raw)
+            if parsed and len(parsed) >= min(count, 5):
+                return parsed[:count]
+        except Exception as e:
+            print(f"[LLMStudy] Lyzr open-world flashcards failed: {e}")
+
+    agent_result = _generate_flashcards_via_flashcard_agent(topic_clean, count, local_context or "")
+    if agent_result:
+        return agent_result[:count]
+    return []
+
+
 def generate_quiz_open_world(
     topic: str,
     count: int = 10,

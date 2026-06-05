@@ -16,6 +16,7 @@ class ToolRegistry:
         self.register("open_modal", self.open_modal)
         self.register("display_summary", self.display_summary)
         self.register("open_quiz", self.open_quiz)
+        self.register("open_flashcards", self.open_flashcards)
 
     def navigate_to_page(self, target: str) -> AgentAction:
         """Returns an action to redirect the user to a page (e.g. 'dashboard', 'tutor', 'revision')."""
@@ -55,6 +56,10 @@ class ToolRegistry:
     def open_quiz(self, topic: str = "DBMS") -> AgentAction:
         """Returns an action to navigate to revision center and open a quiz session."""
         return AgentAction(action="open_quiz", target="revision", payload={"topic": topic})
+
+    def open_flashcards(self, topic: str = "General") -> AgentAction:
+        """Returns an action to navigate to revision center and generate flashcards for a topic."""
+        return AgentAction(action="open_flashcards", target="revision", payload={"topic": topic})
 
     def execute_tool(self, tool_name: str, **kwargs) -> AgentAction:
         if tool_name in self.tools:
