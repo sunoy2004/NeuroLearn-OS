@@ -12,19 +12,25 @@ Host the full hackathon stack on **Render only**:
 
 ---
 
-## Quick start (ordered steps)
+## Quick start — frontend only (backends already on Render)
 
-1. **Push** latest `main` to GitHub (includes `.python-version`, `.node-version`, `render.yaml`).
+Use this if **`neurolearn-api`** and **`neurolearn-agent`** are already deployed.
+
+1. Copy your two backend URLs from Render → each service → **Settings** (e.g. `https://neurolearn-api.onrender.com`).
+2. Render → **New +** → **Static Site** → connect `sunoy2004 / NeuroLearn-OS`.
+3. Fill the form per [Part 4](#part-4--render-frontend-neurolearn-web) (build command, `dist`, env vars).
+4. Add SPA rewrite `/*` → `/index.html` under **Redirects/Rewrites**.
+5. **Create Static Site** → open the URL → DevTools → Network must hit `*.onrender.com`, not `localhost`.
+
+---
+
+## Quick start — full stack from scratch
+
+1. **Push** latest `main` to GitHub.
 2. **Qdrant Cloud** — create cluster; save URL + API key.
-3. **Render → Blueprint** (or create 3 services manually):
-   - `neurolearn-api` — Python web service
-   - `neurolearn-agent` — Python web service
-   - `neurolearn-web` — Static site
-4. On **both Python services**, paste all backend secrets from your local `.env` (Qdrant, Lyzr IDs, Deepgram).
-5. On **neurolearn-web**, set `VITE_API_BASE`, `VITE_AGENT_API_BASE`, `VITE_AGENT_WS_BASE` to your real Render URLs.
-6. On **neurolearn-web**, add SPA rewrite: `/*` → `/index.html` (Rewrite) — included if using Blueprint.
-7. **Deploy** all three; wake backends with health curls before demo.
-8. Open `https://neurolearn-web.onrender.com` — Network tab must show `*.onrender.com`, not `localhost`.
+3. Create **two Python web services** (Parts 2 & 3) and paste backend secrets.
+4. Create **one static site** (Part 4) pointing `VITE_*` at those backend URLs.
+5. Wake backends with health curls before demo.
 
 ---
 
@@ -271,21 +277,17 @@ curl https://neurolearn-agent.onrender.com/agents/health
 
 ---
 
-## Part 2B — Alternative: Render Blueprint (all 3 services at once)
+## Part 2B — Optional: Render Blueprint
 
-If you prefer not to fill forms manually:
-
-1. Dashboard → **New +** → **Blueprint**.
-2. Connect `sunoy2004 / NeuroLearn-OS`.
-3. Render reads `render.yaml` and creates **neurolearn-api**, **neurolearn-agent**, and **neurolearn-web**.
-4. After creation, open each **Python** service → **Environment** → add secret keys from Part 2 & 3.
-5. Open **neurolearn-web** → confirm `VITE_*` URLs match your actual API/agent URLs → **Manual Deploy** if you changed them.
+Skip this if you already created the Python services manually. Blueprint is only for provisioning all three services from `render.yaml` in one step.
 
 ---
 
 ## Part 4 — Render: Frontend (`neurolearn-web`)
 
-Create this **after** both Python services are live (so you know their URLs). Dashboard → **New +** → **Static Site**.
+**Standalone deploy** — no Blueprint required. Your two Python services stay as-is.
+
+Dashboard → **New +** → **Static Site** (not Web Service).
 
 ### Source & project
 
@@ -325,8 +327,6 @@ After the site is created, go to **Redirects/Rewrites** and add:
 | `/*` | `/index.html` | **Rewrite** |
 
 Without this, refreshing on `/revision` or `/analytics` returns 404.
-
-> If you deploy via **Blueprint**, this rewrite is already in `render.yaml`.
 
 ### Deploy
 

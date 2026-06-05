@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   TrendingUp,
   HelpCircle,
+  MessageSquare,
 } from "lucide-react";
 
 const intentConfig: Record<
@@ -30,6 +31,9 @@ const intentConfig: Record<
   WEAK_AREAS_QUERY: { label: "Weak Areas", color: "bg-red-500/10 text-red-600 border-red-500/30", icon: AlertTriangle },
   PROGRESS_QUERY: { label: "Progress", color: "bg-green-500/10 text-green-600 border-green-500/30", icon: TrendingUp },
   EXPLANATION_REQUEST: { label: "Explanation", color: "bg-indigo-500/10 text-indigo-600 border-indigo-500/30", icon: GraduationCap },
+  GREETING: { label: "Greeting", color: "bg-sky-500/10 text-sky-600 border-sky-500/30", icon: MessageSquare },
+  EDUCATIONAL_QUESTION: { label: "Question", color: "bg-violet-500/10 text-violet-600 border-violet-500/30", icon: GraduationCap },
+  GENERAL_CONVERSATION: { label: "Chat", color: "bg-slate-500/10 text-slate-600 border-slate-500/30", icon: MessageSquare },
   UNKNOWN: { label: "Unknown", color: "bg-gray-500/10 text-gray-600 border-gray-500/30", icon: HelpCircle },
 };
 

@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mic, MicOff, Bot, User, Zap, Activity, Brain, Cpu, MessageSquare } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
 import { useAgent } from "@/context/AgentContext";
 import { getCognitiveProfile } from "@/services/memory/qdrantClient";
 import { cn } from "@/lib/utils";
@@ -26,7 +25,7 @@ export function VoiceInterface() {
   } = useAgent();
 
   const isListening = voiceStatus === "listening";
-  const isProcessing = voiceStatus === "processing";
+  const isProcessing = voiceStatus === "thinking" || voiceStatus === "executing";
 
   useEffect(() => {
     async function loadProfile() {

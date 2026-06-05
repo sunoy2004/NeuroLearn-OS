@@ -22,8 +22,6 @@ function normalizeActionPayload(raw?: Record<string, unknown>): Record<string, u
 }
 
 export function registerDefaultActions() {
-  const store = useAppStore.getState();
-
   // Navigation Registry
   actionRegistry.register({
     name: "navigate_dashboard",

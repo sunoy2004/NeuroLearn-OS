@@ -36,7 +36,7 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [messages, setMessages] = useState<SessionMessage[]>([]);
 
   useEffect(() => {
-    const unsubStatus = persistentVoiceSessionManager.subscribeStatus((newStatus) => {
+    const unsubStatus = persistentVoiceSessionManager.subscribeStatus((newStatus: ConnectionStatus) => {
       setWebsocketStatus(newStatus);
       if (newStatus === "connecting") {
         agentRegistry.processing("orchestrator", "Connecting to Agent Service...", 30);
@@ -47,7 +47,7 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
     });
 
-    const unsubVoice = persistentVoiceSessionManager.subscribeVoiceStatus((newVoice) => {
+    const unsubVoice = persistentVoiceSessionManager.subscribeVoiceStatus((newVoice: VoiceStatus) => {
       setVoiceStatus(newVoice);
       if (newVoice === "listening") {
         agentRegistry.activate("orchestrator", "Listening to microphone...", 50);
@@ -62,21 +62,21 @@ export const AgentContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
     });
 
-    const unsubTranscript = persistentVoiceSessionManager.subscribeTranscript((text) => {
+    const unsubTranscript = persistentVoiceSessionManager.subscribeTranscript((text: string) => {
       setTranscript(text);
       if (text) {
         agentRegistry.activate("orchestrator", `Hearing: "${text.slice(0, 30)}..."`, 60);
       }
     });
 
-    const unsubStream = persistentVoiceSessionManager.subscribeStream((streamText) => {
+    const unsubStream = persistentVoiceSessionManager.subscribeStream((streamText: string) => {
       setAiResponseStream(streamText);
       if (streamText) {
         agentRegistry.processing("tutor", "Streaming tutor response...", 90);
       }
     });
 
-    const unsubMessages = persistentVoiceSessionManager.subscribeMessages((msg) => {
+    const unsubMessages = persistentVoiceSessionManager.subscribeMessages((msg: SessionMessage) => {
       setMessages((prev) => [...prev, msg]);
       setAiResponseStream("");
 

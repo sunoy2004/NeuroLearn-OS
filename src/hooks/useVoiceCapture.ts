@@ -22,7 +22,7 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastCommand, setLastCommand] = useState<VoiceCommand | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [simulatedMode, setSimulatedMode] = useState(false);
+  const [simulatedMode] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);

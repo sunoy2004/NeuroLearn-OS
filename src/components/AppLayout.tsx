@@ -185,6 +185,7 @@ const pageTitles: Record<Page, string> = {
   "knowledge-graph": "Knowledge Graph",
   "revision": "Revision Center",
   "analytics": "Analytics",
+  "voice": "Voice",
   "settings": "Agent Configuration",
 };
 
@@ -198,11 +199,10 @@ import { commandLifecycleManager } from "@/services/voice/commandLifecycleManage
 
 function TopBar({ page }: TopBarProps) {
   const { voiceStatus, transcript, startListening, providerConfig } = useAgent();
-  const { companionExpanded, setCompanionExpanded } = useAppStore();
+  const { setCompanionExpanded } = useAppStore();
 
   const isListening = voiceStatus === "listening" || voiceStatus === "responding";
   const isProcessing = voiceStatus === "thinking" || voiceStatus === "executing";
-  const isExpanded = companionExpanded;
 
   const handleMicClick = () => {
     if (isListening || isProcessing) {

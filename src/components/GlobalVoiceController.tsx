@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
 import { getAgentWebSocketUrl } from "@/services/api";
-import { createVoiceCommand } from "@/services/voiceIntentClassifier";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
 import { executeAction } from "@/actions/actionExecutor";
 import { routeIntent } from "@/services/intentRouter";
-import type { VoiceCommand, VoiceTranscript, VoiceIntent } from "@/types";
+import type { VoiceCommand, VoiceIntent } from "@/types";
 import { getSpeechRecognitionLang } from "@/config/speechLanguages";
 
 const SpeechRecognition =

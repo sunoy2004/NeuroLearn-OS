@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
 import { useAgent } from "@/context/AgentContext";
 import { VoiceWaveform } from "./VoiceWaveform";
@@ -33,7 +33,6 @@ export function AiCompanionPanel() {
     transcript,
     aiResponseStream,
     startListening,
-    stopListening
   } = useAgent();
 
   const isListening = voiceStatus === "listening" || voiceStatus === "responding";

@@ -166,7 +166,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   fetchDashboardData: async () => {
     try {
-      const data = await apiRequest("/api/analytics/dashboard");
+      const data = await apiRequest<{
+        profile: LearningProfile;
+        weakTopics: WeakTopic[];
+        retentionData: RetentionPoint[];
+        masteryData: MasteryPoint[];
+        lectures: Lecture[];
+      }>("/api/analytics/dashboard");
       set({
         profile: data.profile,
         weakTopics: data.weakTopics,

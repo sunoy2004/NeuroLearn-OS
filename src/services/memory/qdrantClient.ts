@@ -1,4 +1,4 @@
-import type { VoiceCommand, QuizVoiceResult } from "@/types";
+import type { VoiceCommand, QuizVoiceResult, LearningProfile } from "@/types";
 import { apiRequest } from "../api";
 
 export interface MemoryCollection<T = unknown> {
@@ -109,7 +109,6 @@ export interface SearchResult {
 // Fallback in-memory store for offline/standalone execution
 class MemoryStore {
   private collections: Map<string, MemoryPoint[]> = new Map();
-  private userId: string = "demo-user";
 
   constructor() {
     for (const c of memoryCollections) {
@@ -200,7 +199,7 @@ export async function storeQuizResult(result: QuizVoiceResult): Promise<void> {
 export async function getCognitiveProfile(): Promise<SearchResult | null> {
   try {
     // Pull real profile details from the database
-    const profile = await apiRequest("/api/analytics/profile");
+    const profile = await apiRequest<LearningProfile>("/api/analytics/profile");
     return {
       id: "cognitive-profile-server",
       score: 1.0,

@@ -15,21 +15,21 @@ export class GrokProvider implements LLMProvider {
     this.agentId = agentId;
   }
 
-  async chat(messages: Array<{ role: string; content: string }>): Promise<string> {
+  async chat(_messages: Array<{ role: string; content: string }>): Promise<string> {
     const res = await fetch(`${AGENT_API_BASE}/agents/health`);
     if (!res.ok) return `[${this.agentId}] Agent service offline`;
     return `[${this.agentId}] Use voice/text commands — LLM runs on agent service (${this.config.model})`;
   }
 
-  async *stream(messages: Array<{ role: string; content: string }>): AsyncGenerator<string> {
+  async *stream(_messages: Array<{ role: string; content: string }>): AsyncGenerator<string> {
     yield `[${this.agentId}] Streaming via WebSocket agent service`;
   }
 
-  async summarize(text: string) {
-    return { title: "Summary", summary: text.slice(0, 200), concepts: [] };
+  async summarize(_text: string) {
+    return { title: "Summary", summary: _text.slice(0, 200), concepts: [] };
   }
 
-  async embeddings(text: string): Promise<number[]> {
+  async embeddings(_text: string): Promise<number[]> {
     return Array(1536).fill(0);
   }
 

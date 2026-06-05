@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Settings, RefreshCw, CheckCircle, XCircle, Zap, Cpu } from "lucide-react";
-import { fetchAgentHealth, reloadAgentConfigs, type AgentHealthRecord } from "@/config/agentConfigLoader";
+import { type AgentHealthRecord } from "@/config/agentConfigLoader";
 import { agentBootstrap } from "@/agents/bootstrap";
 import { cn } from "@/lib/utils";
 

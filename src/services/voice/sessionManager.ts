@@ -699,7 +699,7 @@ export class PersistentVoiceSessionManager {
   public async submitTextCommand(text: string) {
     this.cancelSpeech();
     this.silenceDetector.cancel();
-    if (!text.strip?.() && !text.trim()) return;
+    if (!text.trim()) return;
 
     // Intercept manual stop commands from text entry
     if (commandLifecycleManager.isStopCommand(text)) {
@@ -742,11 +742,11 @@ export class PersistentVoiceSessionManager {
           }
         } else if (routeResult.category === "EDUCATIONAL_DISCUSSION") {
           response = `I can help you study that topic. Ask me any academic question and I'll explain it here.`;
-        } else if (routeResult.category === "LECTURE_COMMAND") {
+        } else if (routeResult.category === "LECTURE_REQUEST") {
           response = `Handling lecture recording session for: "${text}".`;
-        } else if (routeResult.category === "QUIZ_COMMAND") {
+        } else if (routeResult.category === "QUIZ_REQUEST") {
           response = "Setting up a revision quiz for you in the Revision Center.";
-        } else if (routeResult.category === "REVISION_COMMAND") {
+        } else if (routeResult.category === "FLASHCARD_REQUEST" || routeResult.category === "NOTES_REQUEST") {
           response = "Opening your study materials and flashcards in the Revision Center.";
         } else if (routeResult.category === "PLATFORM_ACTION") {
           response = "Navigating to the requested workspace section.";
@@ -829,7 +829,7 @@ export class PersistentVoiceSessionManager {
   }
 }
 
-export const persistentVoiceSessionManager = new PersistentVoiceVoiceSessionManagerWrapper();
+export const persistentVoiceSessionManager = PersistentVoiceVoiceSessionManagerWrapper();
 
 // Wrapper class to ensure single global singleton instantiation
 function PersistentVoiceVoiceSessionManagerWrapper() {

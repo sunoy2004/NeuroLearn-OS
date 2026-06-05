@@ -79,7 +79,7 @@ const entityExtractionPatterns = {
   ],
 };
 
-function extractEntities(transcript: string, intent: ConversationIntent): Record<string, string> {
+function extractEntities(transcript: string, _intent: ConversationIntent): Record<string, string> {
   const entities: Record<string, string> = {};
 
   for (const pattern of entityExtractionPatterns.topic) {

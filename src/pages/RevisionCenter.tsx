@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, Zap as ZapIcon, TrendingUp, FileText, ExternalLink, Save, Play } from "lucide-react";
+import { BookOpen, Brain, Clock, CheckCircle, XCircle, RotateCcw, ChevronRight, AlertTriangle, Zap, Calendar, Plus, TrendingUp, FileText, Save, Play } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { Flashcard } from "@/types";
 import { cn } from "@/lib/utils";
@@ -15,8 +15,6 @@ import { quizStore } from "@/services/quizStore";
 import { agentRegistry } from "@/agents/agentRegistry";
 import { apiRequest } from "@/services/api";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { useAgent } from "@/context/AgentContext";
-
 function FlashcardViewer({ cards }: { cards?: Flashcard[] }) {
   const activeFlashcardIndex = useAppStore((s) => s.activeFlashcardIndex);
   const setActiveFlashcardIndex = useAppStore((s) => s.setActiveFlashcardIndex);
