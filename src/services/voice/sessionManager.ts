@@ -1,4 +1,4 @@
-import { AGENT_WS_BASE } from "../api";
+import { getAgentWebSocketUrl } from "../api";
 import { browserVoiceProvider } from "./BrowserVoiceProvider";
 import { SilenceDetector } from "./silenceDetector";
 import { useAppStore } from "@/store/appStore";
@@ -113,7 +113,7 @@ export class PersistentVoiceSessionManager {
     }
 
     this.setStatus("connecting");
-    const wsUrl = `${AGENT_WS_BASE.replace("http", "ws")}/ws/agent-stream`;
+    const wsUrl = getAgentWebSocketUrl();
     console.log("[PersistentVoiceSessionManager] Connecting to WebSocket:", wsUrl);
 
     try {

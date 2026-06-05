@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { createVoiceCommand } from "@/services/voiceIntentClassifier";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
 import type { VoiceCommand, VoiceTranscript } from "@/types";
-import { WS_BASE } from "../services/api";
+import { getBackendVoiceWebSocketUrl } from "../services/api";
 
 interface UseVoiceCaptureResult {
   isListening: boolean;
@@ -59,7 +59,7 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
 
     try {
       // Connect to WebSocket voice stream pipeline on FastAPI
-      const wsUrl = `${WS_BASE.replace("http", "ws")}/api/voice/ws/voice-stream`;
+      const wsUrl = getBackendVoiceWebSocketUrl();
       const ws = new WebSocket(wsUrl);
       socketRef.current = ws;
 

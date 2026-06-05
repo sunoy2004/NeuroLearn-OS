@@ -1,0 +1,12 @@
+[build]
+  command = "npm ci && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA-style fallback (app uses in-memory routing; safe for direct URL hits)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -1,0 +1,98 @@
+# NeuroLearn OS — Render Blueprint (2 Python web services)
+# Deploy: Render Dashboard → New → Blueprint → connect this repo
+# Set secret env vars in the Render dashboard after the blueprint is created.
+
+services:
+  - type: web
+    name: neurolearn-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt -r agent_service/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/stack/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        value: sqlite:///./neurolearn.db
+      - key: MEMORY_PROVIDER
+        value: qdrant
+      - key: VOICE_PROVIDER
+        value: omi
+      - key: LYZR_BASE_URL
+        value: https://agent-prod.studio.lyzr.ai
+      - key: ORCHESTRATOR_AGENT_PROVIDER
+        value: lyzr
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: OMI_DEEPGRAM_API_KEY
+        sync: false
+      - key: ORCHESTRATOR_AGENT_API_KEY
+        sync: false
+      - key: ORCHESTRATOR_AGENT_LYZR_ID
+        sync: false
+      - key: TUTOR_AGENT_LYZR_ID
+        sync: false
+      - key: LECTURE_AGENT_LYZR_ID
+        sync: false
+      - key: NOTES_AGENT_LYZR_ID
+        sync: false
+      - key: QUIZ_AGENT_LYZR_ID
+        sync: false
+      - key: FLASHCARD_AGENT_LYZR_ID
+        sync: false
+      - key: ANALYTICS_AGENT_LYZR_ID
+        sync: false
+      - key: KNOWLEDGE_GRAPH_AGENT_LYZR_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: web
+    name: neurolearn-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt -r agent_service/requirements.txt
+    startCommand: uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /agents/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        value: sqlite:///./neurolearn.db
+      - key: MEMORY_PROVIDER
+        value: qdrant
+      - key: VOICE_PROVIDER
+        value: omi
+      - key: LYZR_BASE_URL
+        value: https://agent-prod.studio.lyzr.ai
+      - key: ORCHESTRATOR_AGENT_PROVIDER
+        value: lyzr
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: OMI_DEEPGRAM_API_KEY
+        sync: false
+      - key: ORCHESTRATOR_AGENT_API_KEY
+        sync: false
+      - key: ORCHESTRATOR_AGENT_LYZR_ID
+        sync: false
+      - key: TUTOR_AGENT_LYZR_ID
+        sync: false
+      - key: LECTURE_AGENT_LYZR_ID
+        sync: false
+      - key: NOTES_AGENT_LYZR_ID
+        sync: false
+      - key: QUIZ_AGENT_LYZR_ID
+        sync: false
+      - key: FLASHCARD_AGENT_LYZR_ID
+        sync: false
+      - key: ANALYTICS_AGENT_LYZR_ID
+        sync: false
+      - key: KNOWLEDGE_GRAPH_AGENT_LYZR_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

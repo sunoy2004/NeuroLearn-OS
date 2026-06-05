@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
-import { AGENT_WS_BASE } from "@/services/api";
+import { getAgentWebSocketUrl } from "@/services/api";
 import { createVoiceCommand } from "@/services/voiceIntentClassifier";
 import { voiceSessionManager } from "@/services/voiceSessionManager";
 import { executeAction } from "@/actions/actionExecutor";
@@ -59,7 +59,7 @@ export function GlobalVoiceController() {
 
     try {
       // 1. Initialize web socket connection to the separate Agent Service
-      const wsUrl = `${AGENT_WS_BASE.replace("http", "ws")}/ws/agent-stream`;
+      const wsUrl = getAgentWebSocketUrl();
       console.log("Global voice socket connecting to:", wsUrl);
       const ws = new WebSocket(wsUrl);
       socketRef.current = ws;
