@@ -10,12 +10,22 @@ export interface TranscriptChunk {
   speaker?: string;
 }
 
+type AddChunkOptions = {
+  /** When false, chunk stays local until lecture save (avoids flooding API on upload). */
+  syncBackend?: boolean;
+};
+
 const STORAGE_KEY = "neurolearn_transcript_chunks";
+const SYNC_DEBOUNCE_MS = 2500;
 
 class TranscriptStore {
   private chunks: TranscriptChunk[] = [];
   private activeLectureId: string | null = null;
   private listeners: Set<(chunks: TranscriptChunk[]) => void> = new Set();
+  private pendingSyncChunk: TranscriptChunk | null = null;
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncing = false;
+  private backendSyncEnabled = true;
 
   constructor() {
     this.loadFromStorage();
@@ -33,6 +43,16 @@ class TranscriptStore {
   private persist() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.chunks));
     this.listeners.forEach((cb) => cb(this.getActiveChunks()));
+  }
+
+  /** Disable per-chunk API sync during bulk imports (e.g. video upload). */
+  setBackendSyncEnabled(enabled: boolean) {
+    this.backendSyncEnabled = enabled;
+    if (!enabled && this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+      this.pendingSyncChunk = null;
+    }
   }
 
   startLecture(lectureId?: string): string {
@@ -62,7 +82,8 @@ class TranscriptStore {
     text: string,
     type: "speech" | "concept" = "speech",
     timeLabel?: string,
-    lectureId?: string
+    lectureId?: string,
+    options?: AddChunkOptions
   ): TranscriptChunk {
     const lecId = lectureId || this.activeLectureId || this.startLecture();
     const chunk: TranscriptChunk = {
@@ -76,10 +97,37 @@ class TranscriptStore {
     this.chunks.push(chunk);
     this.persist();
 
-    // Async persist to backend (non-blocking)
-    this.syncChunkToBackend(chunk).catch(() => {});
+    const shouldSync = options?.syncBackend !== false && this.backendSyncEnabled;
+    if (shouldSync) {
+      this.scheduleBackendSync(chunk);
+    }
 
     return chunk;
+  }
+
+  private scheduleBackendSync(chunk: TranscriptChunk) {
+    this.pendingSyncChunk = chunk;
+    if (this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      void this.flushPendingSync();
+    }, SYNC_DEBOUNCE_MS);
+  }
+
+  private async flushPendingSync() {
+    if (!this.pendingSyncChunk || this.syncing) return;
+    const chunk = this.pendingSyncChunk;
+    this.pendingSyncChunk = null;
+    this.syncing = true;
+    try {
+      await this.syncChunkToBackend(chunk);
+    } catch {
+      // Best-effort — chunks are persisted locally and saved with the lecture
+    } finally {
+      this.syncing = false;
+      if (this.pendingSyncChunk) {
+        this.scheduleBackendSync(this.pendingSyncChunk);
+      }
+    }
   }
 
   private async syncChunkToBackend(chunk: TranscriptChunk) {

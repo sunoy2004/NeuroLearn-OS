@@ -419,6 +419,8 @@ export function LectureStudio() {
 
       uploadedFilenameRef.current = result.filename.replace(/\.[^.]+$/, "") || result.filename;
 
+      transcriptStore.setBackendSyncEnabled(false);
+
       clearLectureTranscript();
       seenConceptsRef.current.clear();
       transcriptStore.startLecture(result.lectureId);
@@ -448,7 +450,9 @@ export function LectureStudio() {
 
       setUploadingFile(false);
       await saveAndProcessLecture();
+      transcriptStore.setBackendSyncEnabled(true);
     } catch (err) {
+      transcriptStore.setBackendSyncEnabled(true);
       const msg = err instanceof Error ? err.message : "Upload failed";
       setUploadError(msg);
       agentRegistry.idle("lecture", "Upload transcription failed");
@@ -598,11 +602,14 @@ export function LectureStudio() {
       agentRegistry.idle("notes", "Lecture processing failed");
       agentRegistry.idle("lecture", "Lecture processing failed");
       setProcessingLecture(false);
-      useAppStore.getState().addAgentNotification(
-        err instanceof Error ? err.message : "Lecture processing failed. Ensure you spoke during recording.",
-        "warning",
-        "Lecture Agent"
-      );
+      const raw = err instanceof Error ? err.message : "Lecture processing failed.";
+      const message =
+        raw.includes("Failed to fetch") || raw.includes("502")
+          ? "API server unavailable (502) — wait 30s for Render to wake up, then try again."
+          : raw.includes("spoke during recording")
+            ? raw
+            : raw || "Lecture processing failed. Ensure you spoke during recording.";
+      useAppStore.getState().addAgentNotification(message, "warning", "Lecture Agent");
     }
   };
 

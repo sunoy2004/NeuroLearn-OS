@@ -14,10 +14,18 @@ Processes raw transcripts in stages:
 Each stage has fallback to NLP heuristics when LLM is unavailable.
 """
 
+import os
 import re
 import uuid
 import json
 from typing import Dict, Any, List, Optional, Tuple
+
+
+def is_lightweight_process() -> bool:
+    """Render free tier: fewer LLM round-trips to avoid 502/OOM crashes."""
+    if os.getenv("RENDER") == "true":
+        return True
+    return os.getenv("TRANSCRIPT_PROCESS_MODE", "").strip().lower() == "light"
 
 from concept_keywords import extract_concepts_from_text
 from backend.services.content_extractor import (
@@ -161,15 +169,17 @@ def segment_transcript(text: str, subject: str = "Lecture") -> List[Dict[str, st
 
 
 class TranscriptProcessor:
-    def __init__(self):
-        # Lazy load agent LLMs isolated per specialist
+    def __init__(self, lightweight: Optional[bool] = None):
+        self.lightweight = is_lightweight_process() if lightweight is None else lightweight
         self.classification_agent = ClassificationAgent(get_agent_llm("lecture"))
         self.concept_agent = ConceptAgent(get_agent_llm("notes"))
         self.summary_agent = SummaryAgent(get_agent_llm("summary"))
         self.notes_agent = NotesAgent(get_agent_llm("notes"))
         self.flashcard_agent = FlashcardAgent(get_agent_llm("flashcard"))
         self.quiz_agent = QuizAgent(get_agent_llm("quiz"))
-        self.educational_quality_agent = EducationalQualityAgent(get_agent_llm("quiz"))
+        self.educational_quality_agent = (
+            None if self.lightweight else EducationalQualityAgent(get_agent_llm("quiz"))
+        )
 
     def process(
         self,
@@ -201,6 +211,8 @@ class TranscriptProcessor:
 
         # 2. Segment transcript into topic sections
         sections = segment_transcript(transcript, subject)
+        if self.lightweight and len(sections) > 4:
+            sections = sections[:4]
 
         # 3. Title & Category Classification
         title = title_hint
@@ -267,13 +279,14 @@ class TranscriptProcessor:
         topics_breakdown: List[Dict[str, Any]] = []
         for sec in sections:
             sec_summary_text = ""
-            try:
-                sec_sum = self.summary_agent.summarize(sec["content"])
-                sec_summary_text = sec_sum.get("summary", "")
-                if sec_summary_text:
-                    section_summaries.append(f"Section '{sec['title']}': {sec_summary_text}")
-            except Exception:
-                pass
+            if not self.lightweight:
+                try:
+                    sec_sum = self.summary_agent.summarize(sec["content"])
+                    sec_summary_text = sec_sum.get("summary", "")
+                    if sec_summary_text:
+                        section_summaries.append(f"Section '{sec['title']}': {sec_summary_text}")
+                except Exception:
+                    pass
 
             if not sec_summary_text:
                 excerpt = sec["content"][:400].strip()
@@ -333,11 +346,12 @@ class TranscriptProcessor:
         except Exception as e:
             print(f"[TranscriptProcessor] Failed to load learning history: {e}")
 
-        # Quality checker loop (up to 3 attempts total: 1 initial + 2 refinements)
+        # Quality checker loop (1 pass on Render to avoid timeouts/OOM)
         feedback = ""
         flashcards = []
         quizzes = []
-        for attempt in range(3):
+        max_attempts = 1 if self.lightweight else 3
+        for attempt in range(max_attempts):
             # 7. Flashcard Generation (passing rich context)
             try:
                 flashcards = self.flashcard_agent.generate_cards(
@@ -382,7 +396,9 @@ class TranscriptProcessor:
                     concepts_details=concepts_details, notes=notes, count=10,
                 )
 
-            # 9. Verify quality with EducationalQualityAgent
+            # 9. Verify quality with EducationalQualityAgent (skipped in lightweight mode)
+            if self.educational_quality_agent is None:
+                break
             try:
                 verification = self.educational_quality_agent.verify_quality(
                     notes=notes,

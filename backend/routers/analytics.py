@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -439,9 +440,14 @@ async def process_lecture_only(request: LectureUploadRequest):
 
         lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
         processor = TranscriptProcessor()
-        result = processor.process(
-            request.transcript, "Pending", request.subject, request.language,
-            user_id="demo-user", lecture_id=lecture_id,
+        result = await asyncio.to_thread(
+            processor.process,
+            request.transcript,
+            "Pending",
+            request.subject,
+            request.language,
+            user_id="demo-user",
+            lecture_id=lecture_id,
         )
         return {
             "status": "processed",
@@ -493,7 +499,8 @@ async def save_processed_lecture(request: LectureSaveRequest, db: Session = Depe
         # Re-run processing on the server when the client payload is missing rich content
         if _processed_content_incomplete(result):
             processor = TranscriptProcessor()
-            fresh = processor.process(
+            fresh = await asyncio.to_thread(
+                processor.process,
                 request.transcript,
                 request.title.strip(),
                 request.subject,
@@ -604,9 +611,14 @@ async def save_and_process_lecture(request: LectureUploadRequest, db: Session = 
         lecture_id = request.lecture_id or f"lec_{uuid.uuid4().hex[:8]}"
 
         processor = TranscriptProcessor()
-        result = processor.process(
-            request.transcript, request.title, request.subject, request.language,
-            user_id="demo-user", lecture_id=lecture_id
+        result = await asyncio.to_thread(
+            processor.process,
+            request.transcript,
+            request.title,
+            request.subject,
+            request.language,
+            user_id="demo-user",
+            lecture_id=lecture_id,
         )
 
         save_title = request.title.strip() if request.title and request.title != "Auto-detect" else result.title
