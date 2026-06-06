@@ -465,4 +465,7 @@ Local `.env` is unchanged. Production uses Render env UIs only (`VITE_*` on the 
 | `src/services/api.ts` | `VITE_*` URL resolution + WebSocket helpers |
 | `.env.example` | Documents local + production vars |
 
-See also: [HACKATHON_SETUP.md](./HACKATHON_SETUP.md) for local dev and Lyzr agent setup.
+See also:
+
+- [HACKATHON_SETUP.md](./HACKATHON_SETUP.md) — local dev and Lyzr agent setup
+- [CI.md](./CI.md) — GitHub Actions CI + gating production deploys on Render

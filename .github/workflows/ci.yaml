@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (TypeScript + Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_API_BASE: https://ci-placeholder.onrender.com
+          VITE_AGENT_API_BASE: https://ci-placeholder.onrender.com
+          VITE_AGENT_WS_BASE: wss://ci-placeholder.onrender.com
+
+  backend:
+    name: Backend API (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Compile Python sources
+        run: python -m compileall backend
+
+      - name: Import smoke test
+        run: python -c "from backend.main import app; assert app.title"
+        env:
+          DATABASE_URL: sqlite:///./ci-test.db
+          QDRANT_URL: http://127.0.0.1:6333
+
+  agent-service:
+    name: Agent Service (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            agent_service/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt -r agent_service/requirements.txt
+
+      - name: Compile Python sources
+        run: python -m compileall backend agent_service
+
+      - name: Import smoke test
+        run: python -c "from agent_service.main import app; assert app.title"
+        env:
+          DATABASE_URL: sqlite:///./ci-test.db
+          QDRANT_URL: http://127.0.0.1:6333
+
+  deploy-production:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, agent-service]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Trigger Render deploy hooks
+        env:
+          HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+          HOOK_AGENT: ${{ secrets.RENDER_DEPLOY_HOOK_AGENT }}
+          HOOK_WEB: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
+        run: |
+          set -euo pipefail
+          deploy_if_set() {
+            local name="$1"
+            local hook="$2"
+            if [ -n "$hook" ]; then
+              echo "Deploying $name..."
+              curl -fsS -X POST "$hook"
+              echo " $name deploy triggered."
+            else
+              echo "Skipping $name (RENDER_DEPLOY_HOOK_* secret not set)."
+            fi
+          }
+          deploy_if_set "neurolearn-api" "$HOOK_API"
+          deploy_if_set "neurolearn-agent" "$HOOK_AGENT"
+          deploy_if_set "neurolearn-web" "$HOOK_WEB"
