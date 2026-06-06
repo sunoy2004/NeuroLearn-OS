@@ -104,7 +104,7 @@ No Docker needed in production.
 | **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` | *(none — static)* |
 | **Publish Directory** | — | — | `dist` |
 | **Instance Type** | Free | Free | Free |
-| **Health Check Path** *(Settings)* | `/health` | `/agents/health` | — |
+| **Health Check Path** *(Settings)* | `/api/stack/health` | `/agents/health` | — |
 | **SPA rewrite** *(Redirects)* | — | — | `/*` → `/index.html` (Rewrite) |
 | **Environment Variables** | Backend secrets (below) | **Identical** to API | `VITE_*` only (below) |
 
@@ -149,7 +149,7 @@ Go to **Settings** → set:
 
 | Setting | Value |
 |---------|--------|
-| **Health Check Path** | `/health` |
+| **Health Check Path** | `/api/stack/health` |
 
 ### Environment variables — Service 1
 

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     KEEP_ALIVE_ENABLED: bool = True
     KEEP_ALIVE_INTERVAL_MINUTES: int = 10
     AGENT_HEALTH_URL: str = "https://neurolearn-agent.onrender.com/agents/health"
-    API_HEALTH_URL: str = "https://neurolearn-api-k19o.onrender.com/health"
+    API_HEALTH_URL: str = "https://neurolearn-api-k19o.onrender.com/api/stack/health"
     
     class Config:
         env_file = str(env_file_path) if env_file_path.exists() else ".env"
