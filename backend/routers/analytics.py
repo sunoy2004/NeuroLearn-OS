@@ -13,7 +13,7 @@ from backend.database import (
 )
 from backend.services.content_extractor import process_transcript_with_llm_or_heuristic
 from backend.services.transcript_processor import TranscriptProcessor
-from backend.services.graph_service import build_graph_from_transcript
+from backend.services.graph_service import build_graph_from_transcript, _concept_id
 from backend.services.language_utils import resolve_language
 from backend.services import qdrant_service
 from backend.services.speech_service import transcribe_media_file, ALLOWED_UPLOAD_EXTENSIONS
@@ -78,6 +78,61 @@ def _processed_content_incomplete(result) -> bool:
     if has_summary and has_notes and has_concepts:
         return False
     return not has_summary and not has_notes and not has_concepts
+
+
+def _upsert_concept(
+    db: Session,
+    cache: dict[str, DBConcept],
+    *,
+    concept_id: str,
+    name: str,
+    subject: str,
+    mastery: float = 50.0,
+    retention: float = 60.0,
+    connections: list | None = None,
+    definition: str | None = None,
+    importance: str = "Medium",
+    related: list | None = None,
+) -> DBConcept:
+    """Insert or update a concept without duplicate INSERTs in the same transaction."""
+    connections = connections or []
+    related = related or []
+
+    db_concept = cache.get(concept_id)
+    if db_concept is None:
+        db_concept = db.query(DBConcept).filter(DBConcept.id == concept_id).first()
+    if db_concept is None:
+        db_concept = DBConcept(
+            id=concept_id,
+            name=name,
+            subject=subject,
+            mastery=mastery,
+            retention=retention,
+            connections=connections,
+            definition=definition,
+            importance=importance,
+            related_concepts_json=json.dumps(related),
+        )
+        db.add(db_concept)
+    else:
+        db_concept.name = name or db_concept.name
+        db_concept.subject = subject or db_concept.subject
+        db_concept.mastery = mastery
+        db_concept.retention = retention
+        existing_connections = set(db_concept.connections)
+        for conn in connections:
+            existing_connections.add(conn)
+        db_concept.connections = list(existing_connections)
+        if definition:
+            db_concept.definition = definition
+        if importance:
+            db_concept.importance = importance
+        if related:
+            db_concept.related_concepts_json = json.dumps(related)
+        db.add(db_concept)
+
+    cache[concept_id] = db_concept
+    return db_concept
 
 
 def _merge_processed_result(existing, fresh):
@@ -214,74 +269,48 @@ def _persist_lecture_result(
         if isinstance(item, dict) and "concept" in item:
             details_map[item["concept"].lower()] = item
 
+    concept_cache: dict[str, DBConcept] = {}
+
     for node in graph_nodes:
         detail = details_map.get(node["name"].lower())
         definition = detail.get("definition") if detail else node.get("definition")
         importance = detail.get("importance") if detail else node.get("importance", "Medium")
         related = detail.get("related_concepts") if detail else node.get("related_concepts", [])
 
-        db_concept = db.query(DBConcept).filter(DBConcept.id == node["id"]).first()
-        if not db_concept:
-            db_concept = DBConcept(
-                id=node["id"],
-                name=node["name"],
-                subject=node["subject"],
-                mastery=node["mastery"],
-                retention=node["retention"],
-                connections=node["connections"],
-                definition=definition,
-                importance=importance,
-                related_concepts_json=json.dumps(related)
-            )
-            db.add(db_concept)
-        else:
-            existing_connections = set(db_concept.connections)
-            for conn in node["connections"]:
-                existing_connections.add(conn)
-            db_concept.connections = list(existing_connections)
-            db_concept.mastery = node["mastery"]
-            db_concept.retention = node["retention"]
-            if definition:
-                db_concept.definition = definition
-            if importance:
-                db_concept.importance = importance
-            if related:
-                db_concept.related_concepts_json = json.dumps(related)
-            db.add(db_concept)
+        _upsert_concept(
+            db,
+            concept_cache,
+            concept_id=node["id"],
+            name=node["name"],
+            subject=node["subject"],
+            mastery=node["mastery"],
+            retention=node["retention"],
+            connections=node["connections"],
+            definition=definition,
+            importance=importance,
+            related=related,
+        )
 
-    # Fallback/merge: use result concepts to enrich DB concepts
+    # Enrich with LLM-extracted concepts (same slug as graph_service to avoid duplicate IDs)
     for name in result.concepts:
-        concept_id = f"con_{name.lower().replace(' ', '_').replace('+', 'plus')}"
-        db_concept = db.query(DBConcept).filter(DBConcept.id == concept_id).first()
-        connections = [
-            f"con_{c.lower().replace(' ', '_').replace('+', 'plus')}"
-            for c in result.concepts if c != name
-        ]
+        concept_id = _concept_id(name)
+        connections = [_concept_id(c) for c in result.concepts if c != name]
         detail = details_map.get(name.lower())
         definition = detail.get("definition") if detail else f"Core concept representing {name} within {subject}."
         importance = detail.get("importance") if detail else "Medium"
         related = detail.get("related_concepts") if detail else []
 
-        if not db_concept:
-            db_concept = DBConcept(
-                id=concept_id, name=name, subject=subject,
-                mastery=50.0, retention=60.0, connections=connections,
-                definition=definition, importance=importance,
-                related_concepts_json=json.dumps(related)
-            )
-            db.add(db_concept)
-        else:
-            existing_connections = set(db_concept.connections)
-            for conn in connections:
-                existing_connections.add(conn)
-            db_concept.connections = list(existing_connections)
-            if definition:
-                db_concept.definition = definition
-            if importance:
-                db_concept.importance = importance
-            if related:
-                db_concept.related_concepts_json = json.dumps(related)
-            db.add(db_concept)
+        _upsert_concept(
+            db,
+            concept_cache,
+            concept_id=concept_id,
+            name=name,
+            subject=subject,
+            connections=connections,
+            definition=definition,
+            importance=importance,
+            related=related,
+        )
 
     # Flashcards — skip duplicates so re-saving a lecture does not roll back the transaction
     for fc in result.flashcards:
