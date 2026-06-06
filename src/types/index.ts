@@ -1,5 +1,18 @@
 export type Page = "dashboard" | "lecture-studio" | "tutor" | "knowledge-graph" | "revision" | "analytics" | "voice" | "settings";
 
+export interface LectureTopicSection {
+  title: string;
+  summary: string;
+  content?: string;
+}
+
+export interface LectureConceptDetail {
+  concept: string;
+  definition?: string;
+  importance?: string;
+  related_concepts?: string[];
+}
+
 export interface Lecture {
   id: string;
   title: string;
@@ -11,6 +24,10 @@ export interface Lecture {
   date: string;
   summary?: string;
   notes?: string;
+  transcript?: string;
+  topicsBreakdown?: LectureTopicSection[];
+  conceptsDetails?: LectureConceptDetail[];
+  category?: string;
 }
 
 export interface Concept {

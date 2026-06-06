@@ -34,7 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { Lecture } from "@/types";
+import type { Lecture, LectureConceptDetail, LectureTopicSection } from "@/types";
 import { MarkdownContent, stripMarkdown } from "@/components/MarkdownContent";
 import {
   Select,
@@ -521,7 +521,8 @@ export function LectureStudio() {
         quizCount?: number;
         title?: string;
         category?: string;
-        concepts_details?: unknown[];
+        concepts_details?: LectureConceptDetail[];
+        topics_breakdown?: LectureTopicSection[];
         relationships?: unknown[];
         flashcards?: unknown[];
         quizzes?: unknown[];
@@ -598,12 +599,28 @@ export function LectureStudio() {
     }
   };
 
+  const openLectureDetail = async (lecture: Lecture) => {
+    try {
+      const detail = await apiRequest<Lecture>(`/api/analytics/lectures/${lecture.id}`);
+      setSelectedLecture(detail);
+    } catch {
+      setSelectedLecture(lecture);
+    }
+  };
+
   const confirmSaveLecture = async () => {
     if (!pendingLectureSave || !lectureNameInput.trim()) return;
     setSavingLecture(true);
     try {
       const p = pendingLectureSave.processed;
-      await apiRequest("/api/analytics/lectures/save", {
+      const saveResponse = await apiRequest<{
+        lecture?: Lecture;
+        summary?: string;
+        notes?: string;
+        concepts?: string[];
+        topics_breakdown?: LectureTopicSection[];
+        concepts_details?: LectureConceptDetail[];
+      }>("/api/analytics/lectures/save", {
         method: "POST",
         body: JSON.stringify({
           title: lectureNameInput.trim(),
@@ -615,6 +632,7 @@ export function LectureStudio() {
           category: p.category || "General",
           concepts: p.concepts || [],
           concepts_details: p.concepts_details || [],
+          topics_breakdown: p.topics_breakdown || [],
           relationships: p.relationships || [],
           summary: p.summary || "",
           notes: p.notes || "",
@@ -627,6 +645,16 @@ export function LectureStudio() {
       await fetchDashboardData();
       await fetchConceptGraph();
       await fetchFlashcards();
+
+      if (saveResponse.lecture) {
+        setSelectedLecture(saveResponse.lecture);
+      } else if (saveResponse.summary || saveResponse.notes) {
+        setLastProcessedSummary({
+          summary: saveResponse.summary || "",
+          notes: saveResponse.notes || "",
+          concepts: saveResponse.concepts || [],
+        });
+      }
 
       useAppStore.getState().addAgentNotification(
         `Lecture "${lectureNameInput.trim()}" saved to your library.`,
@@ -931,8 +959,8 @@ export function LectureStudio() {
                   key={lecture.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedLecture(lecture)}
-                  onKeyDown={(e) => e.key === "Enter" && setSelectedLecture(lecture)}
+                  onClick={() => void openLectureDetail(lecture)}
+                  onKeyDown={(e) => e.key === "Enter" && void openLectureDetail(lecture)}
                   className="p-3 rounded-lg border border-border/40 hover:border-primary/30 bg-muted/10 hover:bg-muted/20 transition-all cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
@@ -1137,6 +1165,39 @@ export function LectureStudio() {
                     </div>
                   </div>
                 )}
+                {(selectedLecture.conceptsDetails?.length ?? 0) > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-[var(--neuro-amber)] mb-2">Concept Breakdown</h4>
+                    <div className="space-y-3">
+                      {selectedLecture.conceptsDetails!.map((detail) => (
+                        <div key={detail.concept} className="rounded-lg border border-border/40 bg-muted/10 p-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-sm font-medium">{detail.concept}</p>
+                            {detail.importance && (
+                              <Badge variant="outline" className="text-[9px]">{detail.importance}</Badge>
+                            )}
+                          </div>
+                          {detail.definition && (
+                            <p className="text-xs text-foreground/80">{detail.definition}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(selectedLecture.topicsBreakdown?.length ?? 0) > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-primary mb-2">Topic Breakdown</h4>
+                    <div className="space-y-3">
+                      {selectedLecture.topicsBreakdown!.map((section) => (
+                        <div key={section.title} className="rounded-lg border border-border/40 bg-muted/10 p-3">
+                          <p className="text-sm font-medium mb-1">{section.title}</p>
+                          <MarkdownContent content={section.summary} className="text-xs" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {selectedLecture.summary && (
                   <div>
                     <h4 className="text-xs font-semibold text-[var(--neuro-cyan)] mb-2">Summary</h4>
@@ -1149,7 +1210,7 @@ export function LectureStudio() {
                     <MarkdownContent content={selectedLecture.notes} />
                   </div>
                 )}
-                {!selectedLecture.summary && !selectedLecture.notes && (
+                {!selectedLecture.summary && !selectedLecture.notes && !(selectedLecture.topicsBreakdown?.length) && (
                   <p className="text-sm text-muted-foreground">
                     No summary available yet. Record a lecture and stop recording to generate notes.
                   </p>

@@ -84,8 +84,33 @@ class DBLecture(Base):
     keywords_json = Column(Text, default="[]") # extracted keywords
     summary = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+    transcript = Column(Text, nullable=True)
+    topics_breakdown_json = Column(Text, default="[]")
+    concepts_details_json = Column(Text, default="[]")
     language = Column(String, default="auto")
     date = Column(String, default=lambda: datetime.utcnow().strftime("%Y-%m-%d"))
+
+    @property
+    def topics_breakdown(self):
+        try:
+            return json.loads(self.topics_breakdown_json or "[]")
+        except Exception:
+            return []
+
+    @topics_breakdown.setter
+    def topics_breakdown(self, value):
+        self.topics_breakdown_json = json.dumps(value)
+
+    @property
+    def concepts_details(self):
+        try:
+            return json.loads(self.concepts_details_json or "[]")
+        except Exception:
+            return []
+
+    @concepts_details.setter
+    def concepts_details(self, value):
+        self.concepts_details_json = json.dumps(value)
 
     @property
     def topics(self):
@@ -247,6 +272,11 @@ def init_db():
         "ALTER TABLE lectures ADD COLUMN language VARCHAR DEFAULT 'auto'",
         "ALTER TABLE lectures ADD COLUMN category VARCHAR DEFAULT 'General'",
         "ALTER TABLE lectures ADD COLUMN keywords_json TEXT DEFAULT '[]'",
+        "ALTER TABLE lectures ADD COLUMN summary TEXT",
+        "ALTER TABLE lectures ADD COLUMN notes TEXT",
+        "ALTER TABLE lectures ADD COLUMN transcript TEXT",
+        "ALTER TABLE lectures ADD COLUMN topics_breakdown_json TEXT DEFAULT '[]'",
+        "ALTER TABLE lectures ADD COLUMN concepts_details_json TEXT DEFAULT '[]'",
         "ALTER TABLE user_profiles ADD COLUMN concepts_detected INTEGER DEFAULT 0",
         "ALTER TABLE user_profiles ADD COLUMN learning_profile_json TEXT DEFAULT '{}'",
         "ALTER TABLE concepts ADD COLUMN definition TEXT",

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from backend.services.agent_env import get_groq_credentials_for_backend
@@ -42,10 +43,64 @@ class LectureSaveRequest(BaseModel):
     concepts: list = []
     concepts_details: list = []
     relationships: list = []
+    topics_breakdown: list = []
     summary: str = ""
     notes: str = ""
     flashcards: list = []
     quizzes: list = []
+
+
+def _lecture_to_dict(lecture: DBLecture) -> dict:
+    return {
+        "id": lecture.id,
+        "title": lecture.title,
+        "subject": lecture.subject,
+        "duration": lecture.duration,
+        "conceptCount": lecture.concept_count,
+        "flashcardCount": lecture.flashcard_count,
+        "topics": lecture.topics,
+        "summary": lecture.summary,
+        "notes": lecture.notes,
+        "transcript": lecture.transcript,
+        "topicsBreakdown": lecture.topics_breakdown,
+        "conceptsDetails": lecture.concepts_details,
+        "category": lecture.category,
+        "date": lecture.date,
+    }
+
+
+def _processed_content_incomplete(result) -> bool:
+    """True when client payload is missing the rich lecture content we expect to persist."""
+    has_summary = bool((result.summary or "").strip())
+    has_notes = bool((result.notes or "").strip())
+    has_concepts = bool(result.concepts)
+    has_breakdown = bool(getattr(result, "topics_breakdown", None))
+    return not has_summary or not has_notes or not has_concepts or not has_breakdown
+
+
+def _merge_processed_result(existing, fresh):
+    """Prefer existing client-processed fields; fill gaps from a fresh server run."""
+    if not (existing.summary or "").strip():
+        existing.summary = fresh.summary
+    if not (existing.notes or "").strip():
+        existing.notes = fresh.notes
+    if not existing.concepts:
+        existing.concepts = fresh.concepts
+    if not existing.concepts_details:
+        existing.concepts_details = fresh.concepts_details
+    if not existing.relationships:
+        existing.relationships = fresh.relationships
+    if not getattr(existing, "topics_breakdown", None):
+        existing.topics_breakdown = fresh.topics_breakdown
+    if not (existing.category or "").strip() or existing.category == "General":
+        existing.category = fresh.category or existing.category
+    if not existing.flashcards:
+        existing.flashcards = fresh.flashcards
+    if not existing.quizzes:
+        existing.quizzes = fresh.quizzes
+    if not (existing.language or "").strip():
+        existing.language = fresh.language
+    return existing
 
 class TranscriptChunkRequest(BaseModel):
     lecture_id: str
@@ -93,21 +148,59 @@ def _persist_lecture_result(
     result,
 ) -> dict:
     """Persist a processed lecture using the user-provided title."""
-    db_lecture = DBLecture(
-        id=lecture_id,
-        title=user_title.strip(),
-        subject=subject,
-        duration=duration,
-        concept_count=len(result.concepts),
-        flashcard_count=len(result.flashcards),
-        topics=result.concepts,
-        summary=result.summary,
-        notes=result.notes,
-        language=result.language,
-        category=result.category,
-        keywords_json=json.dumps(result.concepts),
-    )
-    db.add(db_lecture)
+    existing_lecture = db.query(DBLecture).filter(DBLecture.id == lecture_id).first()
+    if existing_lecture:
+        db_lecture = existing_lecture
+        db_lecture.title = user_title.strip()
+        db_lecture.subject = subject
+        db_lecture.duration = duration
+        db_lecture.concept_count = len(result.concepts)
+        db_lecture.flashcard_count = len(result.flashcards)
+        db_lecture.topics = result.concepts
+        db_lecture.summary = result.summary
+        db_lecture.notes = result.notes
+        db_lecture.transcript = transcript
+        db_lecture.topics_breakdown = getattr(result, "topics_breakdown", []) or []
+        db_lecture.concepts_details = result.concepts_details or []
+        db_lecture.language = result.language
+        db_lecture.category = result.category
+        db_lecture.keywords_json = json.dumps(result.concepts)
+    else:
+        db_lecture = DBLecture(
+            id=lecture_id,
+            title=user_title.strip(),
+            subject=subject,
+            duration=duration,
+            concept_count=len(result.concepts),
+            flashcard_count=len(result.flashcards),
+            topics=result.concepts,
+            summary=result.summary,
+            notes=result.notes,
+            transcript=transcript,
+            topics_breakdown=getattr(result, "topics_breakdown", []) or [],
+            concepts_details=result.concepts_details or [],
+            language=result.language,
+            category=result.category,
+            keywords_json=json.dumps(result.concepts),
+        )
+        db.add(db_lecture)
+
+    # Ensure transcript chunks exist for this lecture
+    existing_chunks = db.query(DBTranscriptChunk).filter(
+        DBTranscriptChunk.lecture_id == lecture_id
+    ).count()
+    if existing_chunks == 0 and transcript.strip():
+        for i, sentence in enumerate(
+            [s.strip() for s in re.split(r'(?<=[.!?])\s+', transcript.strip()) if s.strip()]
+            or [transcript.strip()]
+        ):
+            db.add(DBTranscriptChunk(
+                id=f"chunk_{uuid.uuid4().hex[:10]}",
+                lecture_id=lecture_id,
+                text=sentence,
+                chunk_type="speech",
+                timestamp=str(int(datetime.utcnow().timestamp() * 1000) + i),
+            ))
 
     # Concepts — dynamic graph from transcript
     existing_map = {c.id: {"mastery": c.mastery, "retention": c.retention} for c in db.query(DBConcept).all()}
@@ -188,9 +281,11 @@ def _persist_lecture_result(
                 db_concept.related_concepts_json = json.dumps(related)
             db.add(db_concept)
 
-    # Flashcards
+    # Flashcards — skip duplicates so re-saving a lecture does not roll back the transaction
     for fc in result.flashcards:
         fc_id = fc.get("id") or f"fc_{uuid.uuid4().hex[:8]}"
+        if db.query(DBFlashcard).filter(DBFlashcard.id == fc_id).first():
+            continue
         db_fc = DBFlashcard(
             id=fc_id,
             front=fc.get("front", ""),
@@ -200,10 +295,13 @@ def _persist_lecture_result(
         )
         db.add(db_fc)
 
-    # Quizzes
+    # Quizzes — skip duplicates for the same reason
     for q in result.quizzes:
+        q_id = q.get("id") or f"q_{uuid.uuid4().hex[:8]}"
+        if db.query(DBQuizQuestion).filter(DBQuizQuestion.id == q_id).first():
+            continue
         db_q = DBQuizQuestion(
-            id=f"q_{uuid.uuid4().hex[:8]}",
+            id=q_id,
             question=q.get("question", ""),
             options=q.get("options", []),
             correct=q.get("correct", 0),
@@ -271,10 +369,14 @@ def _persist_lecture_result(
         "lectureId": lecture_id,
         "title": db_lecture.title,
         "concepts": result.concepts,
+        "concepts_details": result.concepts_details,
+        "topics_breakdown": getattr(result, "topics_breakdown", []) or [],
         "summary": result.summary,
         "notes": result.notes,
+        "transcript": transcript,
         "flashcardCount": len(result.flashcards),
         "quizCount": len(result.quizzes),
+        "lecture": _lecture_to_dict(db_lecture),
     }
 
 
@@ -348,6 +450,7 @@ async def process_lecture_only(request: LectureUploadRequest):
             "concepts": result.concepts,
             "concepts_details": result.concepts_details,
             "relationships": result.relationships,
+            "topics_breakdown": result.topics_breakdown,
             "summary": result.summary,
             "notes": result.notes,
             "flashcards": result.flashcards,
@@ -383,7 +486,22 @@ async def save_processed_lecture(request: LectureSaveRequest, db: Session = Depe
             flashcards=request.flashcards,
             quizzes=request.quizzes,
             language=request.language or "en",
+            topics_breakdown=request.topics_breakdown,
         )
+
+        # Re-run processing on the server when the client payload is missing rich content
+        if _processed_content_incomplete(result):
+            processor = TranscriptProcessor()
+            fresh = processor.process(
+                request.transcript,
+                request.title.strip(),
+                request.subject,
+                request.language,
+                user_id="demo-user",
+                lecture_id=request.lecture_id,
+            )
+            result = _merge_processed_result(result, fresh)
+
         return _persist_lecture_result(
             db, request.lecture_id, request.title.strip(),
             request.subject, request.duration, request.transcript, result,
@@ -393,6 +511,15 @@ async def save_processed_lecture(request: LectureSaveRequest, db: Session = Depe
     except Exception as ex:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+@router.get("/lectures/{lecture_id}")
+async def get_lecture_detail(lecture_id: str, db: Session = Depends(get_db)):
+    """Fetch a single saved lecture with full notes, summary, and topic breakdown."""
+    lecture = db.query(DBLecture).filter(DBLecture.id == lecture_id).first()
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    return _lecture_to_dict(lecture)
 
 
 @router.patch("/lectures/{lecture_id}")
@@ -645,21 +772,7 @@ async def get_dashboard_metrics(db: Session = Depends(get_db)):
 
         # 5. Recent Lectures
         recent_lectures = db.query(DBLecture).order_by(DBLecture.date.desc()).limit(5).all()
-        lecture_list = [
-            {
-                "id": l.id,
-                "title": l.title,
-                "subject": l.subject,
-                "duration": l.duration,
-                "conceptCount": l.concept_count,
-                "flashcardCount": l.flashcard_count,
-                "topics": l.topics,
-                "summary": l.summary,
-                "notes": l.notes,
-                "date": l.date
-            }
-            for l in recent_lectures
-        ]
+        lecture_list = [_lecture_to_dict(l) for l in recent_lectures]
 
         # 6. Update user profile statistics dynamically
         recommendations = []

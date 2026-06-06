@@ -51,6 +51,7 @@ class TranscriptProcessingResult:
         flashcards: List[Dict[str, Any]],
         quizzes: List[Dict[str, Any]],
         language: str,
+        topics_breakdown: Optional[List[Dict[str, Any]]] = None,
     ):
         self.title = title
         self.category = category
@@ -62,6 +63,7 @@ class TranscriptProcessingResult:
         self.flashcards = flashcards
         self.quizzes = quizzes
         self.language = language
+        self.topics_breakdown = topics_breakdown or []
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -72,6 +74,7 @@ class TranscriptProcessingResult:
             "relationships": self.relationships,
             "summary": self.summary,
             "notes": self.notes,
+            "topics_breakdown": self.topics_breakdown,
             "flashcardCount": len(self.flashcards),
             "quizCount": len(self.quizzes),
             "language": self.language,
@@ -261,7 +264,9 @@ class TranscriptProcessor:
         # 5. Hierarchical Summarization
         # Generate summary per section, then merge
         section_summaries = []
+        topics_breakdown: List[Dict[str, Any]] = []
         for sec in sections:
+            sec_summary_text = ""
             try:
                 sec_sum = self.summary_agent.summarize(sec["content"])
                 sec_summary_text = sec_sum.get("summary", "")
@@ -269,6 +274,18 @@ class TranscriptProcessor:
                     section_summaries.append(f"Section '{sec['title']}': {sec_summary_text}")
             except Exception:
                 pass
+
+            if not sec_summary_text:
+                excerpt = sec["content"][:400].strip()
+                if len(sec["content"]) > 400:
+                    excerpt += "..."
+                sec_summary_text = excerpt
+
+            topics_breakdown.append({
+                "title": sec["title"],
+                "summary": sec_summary_text,
+                "content": sec["content"],
+            })
 
         if section_summaries:
             merged_summary_input = "\n\n".join(section_summaries)
@@ -384,6 +401,13 @@ class TranscriptProcessor:
                 print(f"[TranscriptProcessor] Quality verification exception: {e}")
                 break
 
+        if not topics_breakdown:
+            topics_breakdown = [{
+                "title": title or subject,
+                "summary": summary,
+                "content": transcript,
+            }]
+
         return TranscriptProcessingResult(
             title=title,
             category=category,
@@ -395,4 +419,5 @@ class TranscriptProcessor:
             flashcards=flashcards,
             quizzes=quizzes,
             language=lang,
+            topics_breakdown=topics_breakdown,
         )
