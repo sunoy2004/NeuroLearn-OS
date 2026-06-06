@@ -102,7 +102,6 @@ class Settings(BaseSettings):
 
     HOST: str = "0.0.0.0"
     AGENT_PORT: int = 8001
-    CORS_ORIGINS: List[str] = ["*"]
 
     class Config:
         env_file = str(env_file_path) if env_file_path.exists() else ".env"

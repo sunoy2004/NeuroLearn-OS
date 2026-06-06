@@ -450,7 +450,7 @@ Local `.env` is unchanged. Production uses Render env UIs only (`VITE_*` on the 
 | 502 / slow first load | Render cold start — hit health URLs 1–2 min before demo |
 | Qdrant connection error | Check `QDRANT_URL` + `QDRANT_API_KEY` on **both** Python services |
 | Agent disabled in health | Set missing `*_AGENT_LYZR_ID` in Render env |
-| CORS errors | Backends default to `CORS_ORIGINS=["*"]` — works with any Render frontend URL |
+| CORS errors | API allows all origins by default. If you still see CORS during lecture processing, the API is likely timing out or cold-starting — wake it with `curl …/api/stack/health` first. |
 | Services sleep on free tier | API service runs APScheduler keep-alive pings every 10 min — set `KEEP_ALIVE_ENABLED=true` on **neurolearn-api** only |
 
 ---

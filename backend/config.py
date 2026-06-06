@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     # Application Config
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    CORS_ORIGINS: List[str] = ["*"]
 
     # Render keep-alive (APScheduler — disable locally if desired)
     KEEP_ALIVE_ENABLED: bool = True
