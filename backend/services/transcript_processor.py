@@ -34,7 +34,7 @@ from backend.services.content_extractor import (
     generate_flashcards_heuristic,
     generate_quiz_heuristic,
 )
-from backend.services.language_utils import resolve_language
+from backend.services.language_utils import resolve_language, language_display_name, fallback_concept_definition
 
 from agent_service.providers.agent_provider_factory import get_agent_llm
 from agent_service.agents.classification_agent import ClassificationAgent
@@ -194,6 +194,11 @@ class TranscriptProcessor:
         # 1. Clean transcript
         transcript = clean_transcript(raw_transcript)
         lang = resolve_language(transcript, language_hint)
+        lang_ctx = {
+            "output_language": lang,
+            "output_language_name": language_display_name(lang),
+            "strict_monolingual": True,
+        }
 
         if not transcript or len(transcript) < 10:
             return TranscriptProcessingResult(
@@ -219,7 +224,7 @@ class TranscriptProcessor:
         category = "General"
         tags = []
         try:
-            classification = self.classification_agent.classify_lecture(transcript)
+            classification = self.classification_agent.classify_lecture(transcript, language=lang)
             title = classification.get("title", title_hint)
             category = classification.get("category", "General")
             tags = classification.get("tags", [])
@@ -244,7 +249,7 @@ class TranscriptProcessor:
         concepts_details = []
         relationships = []
         try:
-            concept_data = self.concept_agent.extract_concepts(transcript)
+            concept_data = self.concept_agent.extract_concepts(transcript, language=lang)
             concepts_details = concept_data.get("concepts", [])
             relationships = concept_data.get("relationships", [])
         except Exception as e:
@@ -268,7 +273,7 @@ class TranscriptProcessor:
             for i, name in enumerate(concept_names):
                 concepts_details.append({
                     "concept": name,
-                    "definition": f"Core concept representing {name} within {subject}.",
+                    "definition": fallback_concept_definition(name, subject, lang),
                     "importance": "High" if i < 3 else "Medium",
                     "related_concepts": [n for n in concept_names if n != name][:3]
                 })
@@ -281,7 +286,7 @@ class TranscriptProcessor:
             sec_summary_text = ""
             if not self.lightweight:
                 try:
-                    sec_sum = self.summary_agent.summarize(sec["content"])
+                    sec_sum = self.summary_agent.summarize(sec["content"], language=lang)
                     sec_summary_text = sec_sum.get("summary", "")
                     if sec_summary_text:
                         section_summaries.append(f"Section '{sec['title']}': {sec_summary_text}")
@@ -308,7 +313,7 @@ class TranscriptProcessor:
         # Generate overall merged summary
         summary = ""
         try:
-            summary_data = self.summary_agent.summarize(merged_summary_input)
+            summary_data = self.summary_agent.summarize(merged_summary_input, language=lang)
             summary = summary_data.get("summary", "")
         except Exception as e:
             print(f"[TranscriptProcessor] Summary stage failed: {e}")
@@ -323,7 +328,7 @@ class TranscriptProcessor:
         # 6. Notes Generation (from merged summaries)
         notes = ""
         try:
-            notes = self.notes_agent.generate_notes(merged_summary_input)
+            notes = self.notes_agent.generate_notes(merged_summary_input, language=lang)
         except Exception as e:
             print(f"[TranscriptProcessor] Notes stage failed: {e}")
 
@@ -354,6 +359,7 @@ class TranscriptProcessor:
         for attempt in range(max_attempts):
             # 7. Flashcard Generation (passing rich context)
             try:
+                fc_ctx = {**lang_ctx, **({"feedback": feedback} if feedback else {})}
                 flashcards = self.flashcard_agent.generate_cards(
                     transcript=transcript,
                     summary=summary,
@@ -363,7 +369,7 @@ class TranscriptProcessor:
                     lecture_category=category,
                     lecture_tags=tags,
                     lecture_id=lecture_id,
-                    context={"feedback": feedback} if feedback else None
+                    context=fc_ctx,
                 )
             except Exception as e:
                 print(f"[TranscriptProcessor] Flashcard stage failed on attempt {attempt + 1}: {e}")
@@ -376,6 +382,7 @@ class TranscriptProcessor:
 
             # 8. Quiz Generation (passing rich context + learning history)
             try:
+                quiz_ctx = {**lang_ctx, **({"feedback": feedback} if feedback else {})}
                 quizzes = self.quiz_agent.generate_quiz(
                     topic=title,
                     transcript=transcript,
@@ -385,7 +392,7 @@ class TranscriptProcessor:
                     relationships=relationships,
                     learning_history=learning_history,
                     count=10,
-                    context={"feedback": feedback} if feedback else None
+                    context=quiz_ctx,
                 )
             except Exception as e:
                 print(f"[TranscriptProcessor] Quiz stage failed on attempt {attempt + 1}: {e}")

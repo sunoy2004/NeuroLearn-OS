@@ -5,6 +5,7 @@ NotesAgent — Generates structured, detailed academic study and revision notes 
 from typing import Dict, Any, Optional
 from agent_service.agents.specialist_agent import SpecialistAgent
 from agent_service.providers.interfaces.llm import LLMProvider
+from agent_service.language_utils import apply_language_lock
 
 NOTES_SYSTEM_PROMPT = """You are the Notes Generation Agent for NeuroLearn OS.
 
@@ -54,10 +55,17 @@ class NotesAgent(SpecialistAgent):
             llm=llm
         )
 
-    def generate_notes(self, transcript: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def generate_notes(
+        self,
+        transcript: str,
+        context: Optional[Dict[str, Any]] = None,
+        language: Optional[str] = None,
+    ) -> str:
         """Generate study notes from the transcript."""
         if not transcript or len(transcript.strip()) < 15:
             return "Transcript too short to generate study notes."
         
         prompt = f"Generate detailed study and revision notes based on this lecture transcript/summaries:\n\n{transcript}"
-        return self.execute(prompt, context)
+        prompt, lang_ctx = apply_language_lock(prompt, language)
+        merged_ctx = {**(context or {}), **(lang_ctx or {})}
+        return self.execute(prompt, merged_ctx or None)

@@ -8,6 +8,7 @@ Falls back to concept-keyword based classification when LLM is unavailable.
 from typing import Dict, Any, Optional, List
 from agent_service.agents.specialist_agent import SpecialistAgent
 from agent_service.providers.interfaces.llm import LLMProvider
+from agent_service.language_utils import apply_language_lock
 
 CLASSIFICATION_SYSTEM_PROMPT = """You are the Lecture Classification Agent for NeuroLearn OS.
 
@@ -37,13 +38,16 @@ class ClassificationAgent(SpecialistAgent):
             llm=llm,
         )
 
-    def classify_lecture(self, transcript: str, max_chars: int = 4000) -> Dict[str, Any]:
+    def classify_lecture(
+        self, transcript: str, max_chars: int = 4000, language: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Classify a lecture transcript and return title, category, and tags."""
         if not transcript or len(transcript.strip()) < 10:
             return {"title": "Short Lecture", "category": "General", "tags": []}
 
         prompt = f"Classify this lecture transcript:\n\n{transcript[:max_chars]}"
-        result = self.execute_json(prompt)
+        prompt, ctx = apply_language_lock(prompt, language)
+        result = self.execute_json(prompt, ctx)
 
         if "error" in result:
             # Fallback to keyword-based classification

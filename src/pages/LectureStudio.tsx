@@ -142,6 +142,8 @@ export function LectureStudio() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadedFilenameRef = useRef<string | null>(null);
+  const interimTextRef = useRef("");
+  const processAfterStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const ACCEPTED_MEDIA = ".mp3,.mp4,.wav,.m4a,.webm,.mpeg,.mpga";
 
@@ -164,6 +166,21 @@ export function LectureStudio() {
     return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   }
 
+  function commitInterimTranscript() {
+    const pending = interimTextRef.current.trim();
+    if (!pending) return;
+    const timeStr = formatTime(useAppStore.getState().recordingTime);
+    useAppStore.getState().addLectureTranscriptLine({
+      time: timeStr,
+      text: pending,
+      type: "speech",
+    });
+    const lecId = transcriptStore.getActiveLectureId();
+    transcriptStore.addChunk(pending, "speech", timeStr, lecId || undefined);
+    interimTextRef.current = "";
+    setInterimText("");
+  }
+
   function addDetectedConcepts(concepts: string[]) {
     const timeStr = formatTime(useAppStore.getState().recordingTime);
     for (const concept of concepts) {
@@ -180,12 +197,18 @@ export function LectureStudio() {
 
   function handleToggle() {
     if (isRecording) {
+      commitInterimTranscript();
       setRecording(false);
     } else {
       persistentVoiceSessionManager.prepareForLectureRecording();
       stopListening();
+      uploadedFilenameRef.current = null;
+      transcriptStore.clearLecture();
+      transcriptStore.setBackendSyncEnabled(true);
       useAppStore.getState().clearLectureTranscript();
       seenConceptsRef.current.clear();
+      interimTextRef.current = "";
+      setInterimText("");
       setRecording(true);
       setRecordingTime(0);
       setShowTranscript(true);
@@ -271,8 +294,12 @@ export function LectureStudio() {
             interim += e.results[i][0].transcript;
           }
         }
-        if (interim) setInterimText(interim);
+        if (interim) {
+          interimTextRef.current = interim;
+          setInterimText(interim);
+        }
         if (newFinalText.trim()) {
+          interimTextRef.current = "";
           setInterimText("");
           const timeStr = formatTime(useAppStore.getState().recordingTime);
           useAppStore.getState().addLectureTranscriptLine({
@@ -364,27 +391,40 @@ export function LectureStudio() {
     return () => window.removeEventListener("concept_detected", handleConcept);
   }, []);
 
-  // Handle pipeline trigger on recording stop
+  // Handle pipeline trigger on recording stop (delay lets final STT results land)
   useEffect(() => {
     if (wasRecordingRef.current && !isRecording) {
-      const duration = useAppStore.getState().recordingTime;
-      const hasTranscript =
-        useAppStore.getState().activeLectureTranscript.some((l) => l.type === "speech") ||
-        transcriptStore.getCompiledTranscript().trim().length > 0;
-
-      if (duration >= 2 && hasTranscript) {
-        saveAndProcessLecture();
-      } else if (duration < 2 || !hasTranscript) {
-        useAppStore.getState().addAgentNotification(
-          duration < 2
-            ? "Recording too short — speak for at least a few seconds before stopping."
-            : "No speech captured — check mic permission and try again.",
-          "warning",
-          "Lecture Agent"
-        );
+      if (processAfterStopTimerRef.current) {
+        clearTimeout(processAfterStopTimerRef.current);
       }
+      processAfterStopTimerRef.current = setTimeout(() => {
+        commitInterimTranscript();
+        const duration = useAppStore.getState().recordingTime;
+        const hasTranscript =
+          useAppStore.getState().activeLectureTranscript.some((l) => l.type === "speech") ||
+          transcriptStore.getCompiledTranscript().trim().length > 0;
+
+        if (duration >= 2 && hasTranscript) {
+          void saveAndProcessLecture();
+        } else if (duration < 2 || !hasTranscript) {
+          useAppStore.getState().addAgentNotification(
+            duration < 2
+              ? "Recording too short — speak for at least a few seconds before stopping."
+              : "No speech captured — check mic permission and try again.",
+            "warning",
+            "Lecture Agent"
+          );
+        }
+      }, 500);
     }
     wasRecordingRef.current = isRecording;
+
+    return () => {
+      if (processAfterStopTimerRef.current) {
+        clearTimeout(processAfterStopTimerRef.current);
+        processAfterStopTimerRef.current = null;
+      }
+    };
   }, [isRecording]);
 
   // Handle externally-triggered stop_lecture action (via CustomEvent)
@@ -543,7 +583,8 @@ export function LectureStudio() {
           transcript: finalTranscript,
           lecture_id: lectureId,
           language: getSpeechLanguageHint(),
-        })
+        }),
+        signal: AbortSignal.timeout(300000),
       });
 
       const conceptCount = response.concepts?.length ?? 0;
@@ -642,7 +683,7 @@ export function LectureStudio() {
           duration: pendingLectureSave.duration,
           transcript: pendingLectureSave.transcript,
           lecture_id: pendingLectureSave.lectureId,
-          language: getSpeechLanguageHint(),
+          language: (p.language as string) || getSpeechLanguageHint(),
           category: p.category || "General",
           concepts: p.concepts || [],
           concepts_details: p.concepts_details || [],

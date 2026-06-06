@@ -7,6 +7,7 @@ Used by the lecture compilation pipeline after recording stops.
 from typing import Dict, Any, Optional
 from agent_service.agents.specialist_agent import SpecialistAgent
 from agent_service.providers.interfaces.llm import LLMProvider
+from agent_service.language_utils import apply_language_lock
 
 SUMMARY_SYSTEM_PROMPT = """You are the Lecture Summarization Agent for NeuroLearn OS.
 
@@ -34,7 +35,7 @@ class SummaryAgent(SpecialistAgent):
             llm=llm
         )
 
-    def summarize(self, transcript: str) -> Dict[str, Any]:
+    def summarize(self, transcript: str, language: Optional[str] = None) -> Dict[str, Any]:
         """Summarize a complete lecture transcript into structured data."""
         if not transcript or len(transcript.strip()) < 20:
             return {
@@ -43,9 +44,11 @@ class SummaryAgent(SpecialistAgent):
                 "concepts": []
             }
 
-        result = self.execute_json(
-            f"Summarize the following lecture transcript:\n\n{transcript}"
+        prompt, ctx = apply_language_lock(
+            f"Summarize the following lecture transcript:\n\n{transcript}",
+            language,
         )
+        result = self.execute_json(prompt, ctx)
 
         if "error" in result:
             return {

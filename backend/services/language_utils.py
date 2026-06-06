@@ -76,9 +76,9 @@ def detect_language(text: str) -> str:
     spanish_markers = len(re.findall(r"\b(el|la|los|las|un|una|es|en|de|que|por|con|para|como|más|este|esta)\b", lower))
     english_markers = len(re.findall(r"\b(the|and|is|are|was|were|this|that|with|for|from|have|has|not|you|we|they)\b", lower))
 
-    if french_markers > max(english_markers, spanish_markers) + 2:
+    if french_markers > max(english_markers, spanish_markers) + 5:
         return "fr"
-    if spanish_markers > max(english_markers, french_markers) + 2:
+    if spanish_markers > max(english_markers, french_markers) + 5:
         return "es"
 
     return "en"
@@ -107,6 +107,16 @@ def prompt_with_language(base_prompt: str, text: str, language_hint: Optional[st
     return (
         f"{MULTILINGUAL_LLM_INSTRUCTION}\n"
         f"Detected/requested language: {name} ({lang}). "
-        f"All output string values must be in {name}.\n\n"
+        f"All output string values must be in {name} only — never mix languages.\n\n"
         f"{base_prompt}"
     )
+
+
+def fallback_concept_definition(name: str, subject: str, lang: str) -> str:
+    templates = {
+        "hi": f"{subject} में {name} को दर्शाने वाली मुख्य अवधारणा।",
+        "bn": f"{subject}-এ {name} এর মূল ধারণা।",
+        "fr": f"Concept clé représentant {name} dans {subject}.",
+        "es": f"Concepto central que representa {name} en {subject}.",
+    }
+    return templates.get(lang, f"Core concept representing {name} within {subject}.")

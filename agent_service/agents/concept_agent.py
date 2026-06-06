@@ -8,6 +8,7 @@ Falls back to keyword extraction when LLM is unavailable.
 from typing import Dict, Any, Optional, List
 from agent_service.agents.specialist_agent import SpecialistAgent
 from agent_service.providers.interfaces.llm import LLMProvider
+from agent_service.language_utils import apply_language_lock
 
 CONCEPT_SYSTEM_PROMPT = """You are the Concept Extraction Agent for NeuroLearn OS.
 
@@ -40,13 +41,16 @@ class ConceptAgent(SpecialistAgent):
             llm=llm
         )
 
-    def extract_concepts(self, transcript: str, max_chars: int = 6000) -> Dict[str, Any]:
+    def extract_concepts(
+        self, transcript: str, max_chars: int = 6000, language: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Extract structured concept data from a transcript."""
         if not transcript or len(transcript.strip()) < 10:
             return {"concepts": [], "relationships": []}
 
         prompt = f"Extract and rank all academic concepts from this transcript:\n\n{transcript[:max_chars]}"
-        result = self.execute_json(prompt)
+        prompt, ctx = apply_language_lock(prompt, language)
+        result = self.execute_json(prompt, ctx)
 
         if "error" in result:
             return self._fallback_extract(transcript)

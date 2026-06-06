@@ -8,6 +8,7 @@ import json
 from typing import Dict, Any, Optional, List
 from agent_service.agents.specialist_agent import SpecialistAgent
 from agent_service.providers.interfaces.llm import LLMProvider
+from agent_service.language_utils import apply_language_lock
 
 QUIZ_SYSTEM_PROMPT = """You are the Quiz Generation Agent for NeuroLearn OS.
 
@@ -112,7 +113,10 @@ class QuizAgent(SpecialistAgent):
             f"Student Learning History:\n{json.dumps(learning_history or {}, indent=2)}\n"
         )
         
-        result = self.execute_json(prompt, context)
+        lang = (context or {}).get("output_language")
+        prompt, lang_ctx = apply_language_lock(prompt, lang)
+        merged_ctx = {**(context or {}), **(lang_ctx or {})}
+        result = self.execute_json(prompt, merged_ctx or None)
         
         if isinstance(result, list):
             return result
