@@ -5,21 +5,22 @@ from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool, QueuePool
-from backend.config import settings
+from backend.config import settings, resolve_database_url
 
-_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+_db_url = resolve_database_url()
+_is_sqlite = _db_url.startswith("sqlite")
 
 if _is_sqlite:
     # SQLite: avoid QueuePool exhaustion — fresh connection per checkout, closed on return
     engine = create_engine(
-        settings.DATABASE_URL,
+        _db_url,
         connect_args={"check_same_thread": False, "timeout": 60},
         poolclass=NullPool,
         pool_pre_ping=True,
     )
 else:
     engine = create_engine(
-        settings.DATABASE_URL,
+        _db_url,
         poolclass=QueuePool,
         pool_size=10,
         max_overflow=20,
@@ -284,6 +285,20 @@ def init_db():
         "ALTER TABLE concepts ADD COLUMN related_concepts_json TEXT DEFAULT '[]'",
         "ALTER TABLE quiz_questions ADD COLUMN difficulty VARCHAR DEFAULT 'Medium'",
         "ALTER TABLE quiz_questions ADD COLUMN question_type VARCHAR DEFAULT 'MCQ'",
+        """CREATE TABLE IF NOT EXISTS saved_quizzes (
+            id VARCHAR PRIMARY KEY,
+            topic VARCHAR NOT NULL,
+            title VARCHAR NOT NULL,
+            questions_json TEXT NOT NULL,
+            last_score INTEGER DEFAULT 0,
+            best_score INTEGER DEFAULT 0,
+            total_questions INTEGER DEFAULT 0,
+            last_accuracy REAL DEFAULT 0.0,
+            attempt_count INTEGER DEFAULT 1,
+            analysis_json TEXT DEFAULT '{}',
+            saved_at VARCHAR,
+            updated_at VARCHAR
+        )""",
     ]
     try:
         from sqlalchemy import text

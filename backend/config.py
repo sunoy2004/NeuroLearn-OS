@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     KEEP_ALIVE_ENABLED: bool = True
     KEEP_ALIVE_INTERVAL_MINUTES: int = 10
     AGENT_HEALTH_URL: str = "https://neurolearn-agent.onrender.com/agents/health"
-    API_HEALTH_URL: str = "https://neurolearn-api-k19o.onrender.com/api/stack/health"
+    API_HEALTH_URL: str = "https://neurolearn-api-k19o.onrender.com/health"
     
     class Config:
         env_file = str(env_file_path) if env_file_path.exists() else ".env"
@@ -46,6 +46,18 @@ class Settings(BaseSettings):
         extra = "ignore"
 
 settings = Settings()
+
+
+def resolve_database_url() -> str:
+    """Use /tmp on Render so SQLite survives process restarts within the same instance."""
+    url = (settings.DATABASE_URL or "sqlite:///./neurolearn.db").strip()
+    if os.getenv("RENDER") == "true" and url in (
+        "sqlite:///./neurolearn.db",
+        "sqlite:///neurolearn.db",
+    ):
+        return "sqlite:////tmp/neurolearn.db"
+    return url
+
 
 # Force load setting attributes into os.environ so other modules and library SDKs can read them
 for key, value in settings.model_dump().items():

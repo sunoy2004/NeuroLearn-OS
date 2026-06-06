@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from backend.config import settings
 from backend.services.omi_service import is_omi_configured, get_omi_stt_api_key
-from backend.services.qdrant_service import get_qdrant_client, COLLECTIONS
+from backend.services.qdrant_service import get_qdrant_client, COLLECTIONS, is_qdrant_available, qdrant_status
 from backend.services.lyzr_service import master_orchestrator
 from backend.services.lyzr_client import get_agent_lyzr_credentials, is_lyzr_configured
 
@@ -14,8 +14,11 @@ router = APIRouter(prefix="/api/stack", tags=["stack"])
 def stack_health():
     """Returns status of the three required hackathon technologies."""
     # Qdrant
-    qdrant_ok = False
+    qdrant_ok = is_qdrant_available()
     qdrant_detail = "not connected"
+    status = qdrant_status()
+    if status.get("last_error"):
+        qdrant_detail = status["last_error"]
     try:
         client = get_qdrant_client()
         cols = []

@@ -159,6 +159,20 @@ function QuizViewer({ topic }: { topic: string }) {
         body: JSON.stringify({ topic: topic || question.topic, answers }),
       });
       setSessionResult(result);
+      try {
+        await saveQuizSession({
+          topic: result.topic,
+          questions: quizQuestions,
+          correct: result.correct,
+          total: result.total,
+          accuracy: result.accuracy,
+          analysis: result.analysis as unknown as Record<string, unknown>,
+          sessionId: activeSavedQuizId,
+        });
+        setSavedToLibrary(true);
+      } catch (saveErr) {
+        console.warn("Auto-save quiz failed — use Save Quiz to retry.", saveErr);
+      }
     } catch (e) {
       console.warn("Quiz submit failed, showing local results.", e);
       const total = quizQuestions.length;
@@ -214,6 +228,11 @@ function QuizViewer({ topic }: { topic: string }) {
       setSavedToLibrary(true);
     } catch (e) {
       console.warn("Failed to save quiz session.", e);
+      useAppStore.getState().addAgentNotification(
+        e instanceof Error ? e.message : "Could not save quiz — check that the API is online.",
+        "warning",
+        "Quiz Agent"
+      );
     } finally {
       setSaving(false);
     }

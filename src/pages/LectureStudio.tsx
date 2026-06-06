@@ -141,6 +141,7 @@ export function LectureStudio() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadedFilenameRef = useRef<string | null>(null);
 
   const ACCEPTED_MEDIA = ".mp3,.mp4,.wav,.m4a,.webm,.mpeg,.mpga";
 
@@ -416,6 +417,8 @@ export function LectureStudio() {
         wordCount: number;
       }>("/api/analytics/lectures/transcribe-upload", formData);
 
+      uploadedFilenameRef.current = result.filename.replace(/\.[^.]+$/, "") || result.filename;
+
       clearLectureTranscript();
       seenConceptsRef.current.clear();
       transcriptStore.startLecture(result.lectureId);
@@ -559,7 +562,11 @@ export function LectureStudio() {
         duration: Math.ceil(duration / 60) || 1,
         processed: response as Record<string, unknown>,
       });
-      setLectureNameInput(response.title && response.title !== "Pending" ? response.title : "");
+      const suggestedTitle =
+        (response.title && response.title !== "Pending" ? response.title : null) ||
+        uploadedFilenameRef.current ||
+        "";
+      setLectureNameInput(suggestedTitle);
       setShowSaveLectureModal(true);
 
       if (response.summary || response.notes) {
@@ -666,11 +673,12 @@ export function LectureStudio() {
       setLectureNameInput("");
     } catch (err) {
       console.error("Failed to save lecture:", err);
-      useAppStore.getState().addAgentNotification(
-        err instanceof Error ? err.message : "Failed to save lecture.",
-        "warning",
-        "Lecture Agent"
-      );
+      const raw = err instanceof Error ? err.message : "Failed to save lecture.";
+      const message =
+        raw.includes("Failed to fetch") || raw.includes("NetworkError")
+          ? "API server unreachable — wait for Render to wake up, then click Save Lecture again."
+          : raw;
+      useAppStore.getState().addAgentNotification(message, "warning", "Lecture Agent");
     } finally {
       setSavingLecture(false);
     }

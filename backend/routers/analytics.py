@@ -70,12 +70,13 @@ def _lecture_to_dict(lecture: DBLecture) -> dict:
 
 
 def _processed_content_incomplete(result) -> bool:
-    """True when client payload is missing the rich lecture content we expect to persist."""
+    """True only when the client sent almost no processed content (avoid re-running on save)."""
     has_summary = bool((result.summary or "").strip())
     has_notes = bool((result.notes or "").strip())
     has_concepts = bool(result.concepts)
-    has_breakdown = bool(getattr(result, "topics_breakdown", None))
-    return not has_summary or not has_notes or not has_concepts or not has_breakdown
+    if has_summary and has_notes and has_concepts:
+        return False
+    return not has_summary and not has_notes and not has_concepts
 
 
 def _merge_processed_result(existing, fresh):

@@ -1,3 +1,4 @@
+import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +7,7 @@ from contextlib import asynccontextmanager
 from backend.config import settings
 from backend.database import init_db, SessionLocal
 from backend.services.db_service import seed_database
-from backend.services.qdrant_service import initialize_qdrant
+from backend.services.qdrant_service import initialize_qdrant, is_qdrant_available, qdrant_status
 
 from backend.routers import voice, tutor, quiz, revision, analytics, graph, stack
 from backend.scheduler.scheduler import start_scheduler, stop_scheduler
@@ -22,15 +23,27 @@ async def lifespan(app: FastAPI):
         seed_database(db)
     finally:
         db.close()
-        
-    # 3. Bootstrap Qdrant Collections
-    initialize_qdrant()
 
-    # 4. Keep Render services awake (health pings every 10 min)
-    start_scheduler()
+    async def _bootstrap_background():
+        """Qdrant + scheduler must not block uvicorn from binding (Render health checks)."""
+        try:
+            await asyncio.to_thread(initialize_qdrant)
+        except Exception as e:
+            print(f"[Qdrant] bootstrap warning: {e}")
+        try:
+            start_scheduler()
+        except Exception as e:
+            print(f"[Scheduler] bootstrap warning: {e}")
+
+    bootstrap_task = asyncio.create_task(_bootstrap_background())
     
     yield
     
+    bootstrap_task.cancel()
+    try:
+        await bootstrap_task
+    except asyncio.CancelledError:
+        pass
     stop_scheduler()
     print("NeuroLearn OS backend server shutting down.")
 
@@ -61,6 +74,18 @@ app.include_router(stack.router)
 @app.get("/")
 def read_root():
     return {"message": "Welcome to NeuroLearn OS Production Agentic API Server"}
+
+
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    """Lightweight liveness probe — no Qdrant or external calls (use for Render health checks)."""
+    return {
+        "status": "ok",
+        "service": "neurolearn-api",
+        "qdrant_connected": is_qdrant_available(),
+        "qdrant": qdrant_status(),
+    }
 
 if __name__ == "__main__":
     uvicorn.run(

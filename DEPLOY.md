@@ -54,7 +54,7 @@ Copy values for:
 - Optional: `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`
 
 ### 0.4 SQLite on Render (demo note)
-Render free tier uses **ephemeral disk**. `neurolearn.db` resets on redeploy. Fine for hackathon demos; mention to judges if asked.
+Render free tier uses **ephemeral disk**. The API stores SQLite at `/tmp/neurolearn.db` on Render so data survives restarts within the same instance, but **resets on redeploy**. Fine for hackathon demos; mention to judges if asked.
 
 ### 0.5 Python version — **required**
 
@@ -104,7 +104,7 @@ No Docker needed in production.
 | **Start Command** | `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` | `uvicorn agent_service.main:app --host 0.0.0.0 --port $PORT` | *(none — static)* |
 | **Publish Directory** | — | — | `dist` |
 | **Instance Type** | Free | Free | Free |
-| **Health Check Path** *(Settings)* | `/api/stack/health` | `/agents/health` | — |
+| **Health Check Path** *(Settings)* | `/health` | `/agents/health` | — |
 | **SPA rewrite** *(Redirects)* | — | — | `/*` → `/index.html` (Rewrite) |
 | **Environment Variables** | Backend secrets (below) | **Identical** to API | `VITE_*` only (below) |
 
@@ -149,7 +149,7 @@ Go to **Settings** → set:
 
 | Setting | Value |
 |---------|--------|
-| **Health Check Path** | `/api/stack/health` |
+| **Health Check Path** | `/health` |
 
 ### Environment variables — Service 1
 
