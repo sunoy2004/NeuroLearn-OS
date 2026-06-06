@@ -126,7 +126,27 @@
 
 @layer base {
   * { @apply border-border; }
-  body { @apply bg-background text-foreground; }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+}
+
+/* iOS safe areas + companion FAB clearance */
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+.safe-top {
+  padding-top: max(0px, env(safe-area-inset-top));
+}
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .neuro-glow { box-shadow: 0 0 20px oklch(0.72 0.19 195 / 0.25); }

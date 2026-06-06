@@ -9,6 +9,7 @@ import {
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Brain, TrendingUp, BookOpen, Target, Activity, Sparkles, Clock, Lightbulb } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { PageHeader, PageShell } from "@/components/PageShell";
 import { cn } from "@/lib/utils";
 
 const retentionConfig = { retention: { label: "Retention %", color: "var(--chart-1)" } };
@@ -95,16 +96,16 @@ export function Analytics() {
   const hasWeeklyData = weeklyActivity.some((d) => d.minutes > 0);
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Analytics</h2>
-          <p className="text-sm text-muted-foreground">Live metrics from your lectures, concepts, and reviews</p>
-        </div>
-        <Badge variant="outline" className="text-[10px] text-[var(--neuro-green)] border-[var(--neuro-green)]/30 gap-1">
-          <Activity className="size-3" /> Live Data
-        </Badge>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Analytics"
+        description="Live metrics from your lectures, concepts, and reviews"
+        actions={
+          <Badge variant="outline" className="text-[10px] text-[var(--neuro-green)] border-[var(--neuro-green)]/30 gap-1">
+            <Activity className="size-3" /> Live Data
+          </Badge>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="border-border/50 flex flex-col items-center justify-center">
@@ -296,6 +297,6 @@ export function Analytics() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

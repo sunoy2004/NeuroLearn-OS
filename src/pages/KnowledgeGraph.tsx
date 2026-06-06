@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Network, Brain, Zap, Filter } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { PageHeader, PageShell } from "@/components/PageShell";
 import { cn } from "@/lib/utils";
 
 function getMasteryColor(mastery: number) {
@@ -108,23 +109,21 @@ export function KnowledgeGraph() {
   const connectedConcepts = selected ? concepts.filter((c) => selected.connections.includes(c.id)) : [];
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Knowledge Graph</h2>
-          <p className="text-sm text-muted-foreground">Semantic concept map · Qdrant vector store · {concepts.length} nodes</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageShell>
+      <PageHeader
+        title="Knowledge Graph"
+        description={`Semantic concept map · Qdrant vector store · ${concepts.length} nodes`}
+        actions={
           <Badge variant="outline" className="text-[10px] text-[var(--neuro-cyan)] border-[var(--neuro-cyan)]/30 gap-1">
             <Network className="size-3" /> Live Graph
           </Badge>
-        </div>
-      </div>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           {/* Filter */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Filter className="size-3.5 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">Filter:</span>
             {["All", "DBMS", "OS"].map((f) => (
@@ -248,6 +247,6 @@ export function KnowledgeGraph() {
           </div>
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

@@ -8,6 +8,10 @@ import { agentRegistry } from "@/agents/agentRegistry";
 import { agentBootstrap } from "@/agents/bootstrap";
 import { routeIntent } from "@/services/intentRouter";
 import { isGreetingTranscript } from "@/services/conversationIntentClassifier";
+import {
+  isMobileDevice,
+  supportsBrowserSpeechRecognition,
+} from "@/utils/device";
 
 export type ConnectionStatus = "connected" | "disconnected" | "connecting";
 export type VoiceStatus = "idle" | "listening" | "thinking" | "responding" | "executing" | "stopped" | "disconnected";
@@ -34,7 +38,11 @@ export class PersistentVoiceSessionManager {
   private reconnectDelay = 1000;
   private serverVoiceProvider = "browser";
   private activeAudio: HTMLAudioElement | null = null;
-  private silenceDetector = new SilenceDetector(() => this.handleSilenceDetected(), 2500);
+  private silenceDetector = new SilenceDetector(
+    () => this.handleSilenceDetected(),
+    isMobileDevice() ? 8000 : 2500
+  );
+  private readonly mobileVoice = isMobileDevice();
   
   // Callback registers
   private statusListeners: Set<(status: ConnectionStatus) => void> = new Set();
@@ -278,13 +286,13 @@ export class PersistentVoiceSessionManager {
                 audio.onended = () => {
                   console.log("[PersistentVoiceSessionManager] Playback ended.");
                   this.activeAudio = null;
-                  if (!useAppStore.getState().isRecording) {
+                  if (this.shouldAutoResumeListening()) {
                     this.startMicrophone();
                   }
                 };
                 audio.onerror = () => {
                   this.activeAudio = null;
-                  if (!useAppStore.getState().isRecording) {
+                  if (this.shouldAutoResumeListening()) {
                     this.startMicrophone();
                   }
                 };
@@ -303,14 +311,14 @@ export class PersistentVoiceSessionManager {
                 undefined, // onstart
                 () => {
                   console.log("[PersistentVoiceSessionManager] Local speak ended.");
-                  if (!useAppStore.getState().isRecording) {
+                  if (this.shouldAutoResumeListening()) {
                     this.startMicrophone();
                   }
                 }
               );
             }
 
-            if (!hasSpeechOutput && !useAppStore.getState().isRecording) {
+            if (!hasSpeechOutput && this.shouldAutoResumeListening()) {
               this.startMicrophone();
             }
 
@@ -458,10 +466,62 @@ export class PersistentVoiceSessionManager {
   }
 
   private handleSilenceDetected() {
+    // Mobile: push-to-talk only — user taps mic again to submit (avoids premature cut-off)
+    if (this.mobileVoice) return;
     if (this.voiceStatus === "listening" && this.transcriptBuffer.trim()) {
       console.log("[PersistentVoiceSessionManager] Inactivity detected. Auto-submitting transcript:", this.transcriptBuffer);
       this.stopMicrophone();
     }
+  }
+
+  private shouldUseBrowserSTT(): boolean {
+    return supportsBrowserSpeechRecognition();
+  }
+
+  private shouldAutoResumeListening(): boolean {
+    return !this.mobileVoice && !useAppStore.getState().isRecording;
+  }
+
+  private resetSilenceOnSpeech(text: string) {
+    if (!this.mobileVoice && text.trim()) {
+      this.silenceDetector.reset();
+    }
+  }
+
+  private startBrowserSTT(
+    onErrorMessage = "Microphone error. Try Chrome or tap mic when done speaking.",
+    onFinalAction: "none" | "submit" = "none"
+  ) {
+    browserVoiceProvider.startSTT(
+      (text) => {
+        this.transcriptBuffer = text;
+        this.transcriptListeners.forEach((cb) => cb(text));
+        if (commandLifecycleManager.isStopCommand(text)) {
+          this.setVoiceStatus("stopped");
+          browserVoiceProvider.speak("Shutting down the voice assistant. Goodbye!", undefined, () => {
+            commandLifecycleManager.executeHardStop();
+          });
+          return;
+        }
+        this.resetSilenceOnSpeech(text);
+      },
+      (finalText) => {
+        this.transcriptBuffer = finalText;
+        if (onFinalAction === "submit" && finalText.trim()) {
+          void this.submitTextCommand(finalText);
+        }
+      },
+      (err) => {
+        useAppStore.getState().addAgentNotification(
+          `${onErrorMessage} (${err})`,
+          "warning",
+          "Orchestrator"
+        );
+        if (!this.mobileVoice) {
+          this.setVoiceStatus("idle");
+        }
+      }
+    );
   }
 
   private cleanupMedia() {
@@ -478,7 +538,13 @@ export class PersistentVoiceSessionManager {
   }
 
   private pickRecorderMimeType(): string {
-    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+    const candidates = [
+      "audio/mp4",
+      "audio/aac",
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+    ];
     for (const type of candidates) {
       if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) {
         return type;
@@ -534,80 +600,66 @@ export class PersistentVoiceSessionManager {
 
     browserVoiceProvider.resetRecognition();
 
+    if (this.mobileVoice) {
+      useAppStore.getState().addAgentNotification(
+        "Listening… tap the mic again when you finish speaking.",
+        "info",
+        "Orchestrator"
+      );
+    }
+
     // Fallback: If socket is disconnected, use Browser Web Speech API
     if (this.status !== "connected") {
+      if (!this.shouldUseBrowserSTT()) {
+        useAppStore.getState().addAgentNotification(
+          "Agent service offline. Connect to the server or use Chrome on desktop for voice.",
+          "warning",
+          "Orchestrator"
+        );
+        this.setVoiceStatus("idle");
+        return;
+      }
       console.log("[PersistentVoiceSessionManager] Offline fallback: Using browser voice recognition.");
-      browserVoiceProvider.startSTT(
-        (text) => {
-          this.transcriptBuffer = text;
-          this.transcriptListeners.forEach((cb) => cb(text));
-          if (commandLifecycleManager.isStopCommand(text)) {
-            console.log("[PersistentVoiceSessionManager] Instant voice stop in offline STT:", text);
-            this.setVoiceStatus("stopped");
-            browserVoiceProvider.speak("Shutting down the voice assistant. Goodbye!", undefined, () => {
-              commandLifecycleManager.executeHardStop();
-            });
-            return;
-          }
-          if (text.trim()) {
-            this.silenceDetector.reset();
-          }
-        },
-        async (finalText) => {
-          this.transcriptBuffer = finalText;
-          await this.submitTextCommand(finalText);
-        },
-        (err) => {
-          useAppStore.getState().addAgentNotification(
-            `Microphone error: ${err}. Try English or use Chrome/Edge.`,
-            "warning",
-            "Orchestrator"
-          );
-          this.setVoiceStatus("idle");
-        }
-      );
+      this.startBrowserSTT("Microphone error. Try English or use Chrome/Edge.", "submit");
       return;
     }
 
-    // Omi + Deepgram: stream mic audio to agent service for cloud STT
+    // Server configured for browser-only STT (no cloud recorder)
     if (this.serverVoiceProvider === "browser") {
-      console.log("[PersistentVoiceSessionManager] Server uses browser voice. Skipping audio recording, starting browser STT.");
-      browserVoiceProvider.startSTT(
-        (text) => {
-          this.transcriptBuffer = text;
-          this.transcriptListeners.forEach((cb) => cb(text));
-          if (commandLifecycleManager.isStopCommand(text)) {
-            console.log("[PersistentVoiceSessionManager] Instant voice stop in browser STT:", text);
-            this.setVoiceStatus("stopped");
-            browserVoiceProvider.speak("Shutting down the voice assistant. Goodbye!", undefined, () => {
-              commandLifecycleManager.executeHardStop();
-            });
-            return;
-          }
-          if (text.trim()) {
-            this.silenceDetector.reset();
-          }
-        },
-        (finalText) => {
-          this.transcriptBuffer = finalText;
-        },
-        (err) => {
-          useAppStore.getState().addAgentNotification(
-            `Microphone error: ${err}. Try selecting English in the language dropdown.`,
-            "warning",
-            "Orchestrator"
-          );
-          this.setVoiceStatus("idle");
-        }
-      );
+      if (!this.shouldUseBrowserSTT()) {
+        useAppStore.getState().addAgentNotification(
+          "Voice input needs Chrome/Android, or switch to cloud STT on the server.",
+          "warning",
+          "Orchestrator"
+        );
+        this.setVoiceStatus("idle");
+        return;
+      }
+      console.log("[PersistentVoiceSessionManager] Server uses browser voice. Starting browser STT.");
+      this.startBrowserSTT("Microphone error. Try selecting English in the language dropdown.");
       return;
     }
 
+    // Omi + Deepgram: record audio on device, send blob on stop
     try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+        },
+      });
       this.recorderMimeType = this.pickRecorderMimeType();
       this.audioChunks = [];
-      this.mediaRecorder = new MediaRecorder(this.mediaStream, { mimeType: this.recorderMimeType });
+
+      try {
+        this.mediaRecorder = new MediaRecorder(this.mediaStream, {
+          mimeType: this.recorderMimeType,
+        });
+      } catch {
+        this.mediaRecorder = new MediaRecorder(this.mediaStream);
+        this.recorderMimeType = this.mediaRecorder.mimeType || "audio/mp4";
+      }
 
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -615,39 +667,18 @@ export class PersistentVoiceSessionManager {
         }
       };
 
-      // Collect audio locally — send as one valid WebM blob on stop (Deepgram rejects concatenated chunks)
-      this.mediaRecorder.start(300);
+      this.mediaRecorder.start(this.mobileVoice ? 500 : 300);
 
-      // Start browser speech recognition in parallel for instant client-side transcription preview
-      browserVoiceProvider.startSTT(
-        (text) => {
-          this.transcriptBuffer = text;
-          this.transcriptListeners.forEach((cb) => cb(text));
-          if (commandLifecycleManager.isStopCommand(text)) {
-            console.log("[PersistentVoiceSessionManager] Instant voice stop in parallel STT:", text);
-            this.setVoiceStatus("stopped");
-            browserVoiceProvider.speak("Shutting down the voice assistant. Goodbye!", undefined, () => {
-              commandLifecycleManager.executeHardStop();
-            });
-            return;
-          }
-          if (text.trim()) {
-            this.silenceDetector.reset();
-          }
-        },
-        (finalText) => {
-          this.transcriptBuffer = finalText;
-        },
-        (err) => {
-          useAppStore.getState().addAgentNotification(
-            `Microphone error: ${err}`,
-            "warning",
-            "Orchestrator"
-          );
-        }
-      );
+      if (this.shouldUseBrowserSTT()) {
+        this.startBrowserSTT("Microphone error.");
+      }
     } catch (err) {
       console.error("[PersistentVoiceSessionManager] Failed to start microphone capture:", err);
+      useAppStore.getState().addAgentNotification(
+        "Microphone access denied. Allow mic permission in browser settings.",
+        "warning",
+        "Orchestrator"
+      );
       this.setVoiceStatus("idle");
     }
   }
@@ -658,8 +689,10 @@ export class PersistentVoiceSessionManager {
 
     await this.flushRecorder();
     // Allow browser STT to emit final results before stopping recognition
-    await new Promise((r) => setTimeout(r, 350));
-    browserVoiceProvider.stopSTT();
+    await new Promise((r) => setTimeout(r, this.mobileVoice ? 500 : 350));
+    if (this.shouldUseBrowserSTT()) {
+      browserVoiceProvider.stopSTT();
+    }
 
     const transcript = this.transcriptBuffer.trim();
     const ws = this.ws;

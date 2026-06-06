@@ -14,6 +14,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -60,6 +61,14 @@ function getAgentStatusColor(status: string): string {
 
 function NeuroSidebar() {
   const { currentPage, setPage, agents, flashcards } = useAppStore();
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const handleNavigate = (page: Page) => {
+    setPage(page);
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
   const activeAgents = agents.filter((a) => a.status === "active" || a.status === "processing").length;
   const dueFlashcards = flashcards.length;
 
@@ -86,7 +95,7 @@ function NeuroSidebar() {
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
                     isActive={currentPage === item.id}
-                    onClick={() => setPage(item.id)}
+                    onClick={() => handleNavigate(item.id)}
                     tooltip={item.label}
                     className={cn(
                       currentPage === item.id && "text-primary bg-primary/10"
@@ -196,6 +205,7 @@ function formatProvider(name: string): string {
 }
 
 import { commandLifecycleManager } from "@/services/voice/commandLifecycleManager";
+import { persistentVoiceSessionManager } from "@/services/voice/sessionManager";
 
 function TopBar({ page }: TopBarProps) {
   const { voiceStatus, transcript, startListening, providerConfig } = useAgent();
@@ -205,32 +215,36 @@ function TopBar({ page }: TopBarProps) {
   const isProcessing = voiceStatus === "thinking" || voiceStatus === "executing";
 
   const handleMicClick = () => {
-    if (isListening || isProcessing) {
-      commandLifecycleManager.executeStop();
-    } else {
-      startListening();
-      setCompanionExpanded(true);
+    if (isListening) {
+      void persistentVoiceSessionManager.stopMicrophone();
+      return;
     }
+    if (isProcessing) {
+      commandLifecycleManager.executeStop();
+      return;
+    }
+    startListening();
+    setCompanionExpanded(true);
   };
 
   return (
-    <header className="sticky top-0 z-40 flex h-12 items-center gap-3 border-b border-border/50 bg-background/80 backdrop-blur-sm px-4">
-      <SidebarTrigger className="size-7 text-muted-foreground hover:text-foreground" />
-      <Separator orientation="vertical" className="h-4" />
-      <h1 className="text-sm font-semibold">{pageTitles[page]}</h1>
+    <header className="safe-top sticky top-0 z-40 flex h-12 min-h-12 items-center gap-2 border-b border-border/50 bg-background/80 backdrop-blur-sm px-3 sm:gap-3 sm:px-4">
+      <SidebarTrigger className="touch-target size-9 shrink-0 text-muted-foreground hover:text-foreground sm:size-7" />
+      <Separator orientation="vertical" className="hidden h-4 sm:block" />
+      <h1 className="min-w-0 truncate text-sm font-semibold">{pageTitles[page]}</h1>
 
       {isListening && (
-        <span className="text-[11px] text-muted-foreground animate-pulse max-w-[200px] sm:max-w-xs truncate ml-2 bg-muted/30 px-2 py-0.5 rounded border border-border/30">
+        <span className="hidden min-w-0 truncate rounded border border-border/30 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground animate-pulse min-[480px]:inline-block min-[480px]:max-w-[140px] sm:max-w-xs">
           Hearing: "{transcript || 'Speaking...'}"
         </span>
       )}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
         <Button
           variant="ghost"
           size="icon"
           className={cn(
-            "size-7 rounded-full border border-border/50 transition-all",
+            "touch-target size-10 rounded-full border border-border/50 transition-all sm:size-7",
             isListening
               ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30"
               : "hover:bg-accent text-muted-foreground"
@@ -291,7 +305,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <NeuroSidebar />
       <SidebarInset className="neuro-grid-bg flex min-h-svh max-h-svh flex-col overflow-hidden">
         <TopBar page={currentPage} />
-        <main className="flex flex-1 min-h-0 flex-col overflow-y-auto overflow-x-hidden">
+        <main className="flex flex-1 min-h-0 flex-col overflow-y-auto overflow-x-hidden pb-24 md:pb-0">
           {children}
         </main>
       </SidebarInset>

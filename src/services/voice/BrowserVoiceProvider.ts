@@ -1,12 +1,21 @@
 // Web Speech API wrapper for browser speech recognition and synthesis
 import { getSpeechRecognitionLang, SPEECH_RECOGNITION_FALLBACK } from "@/config/speechLanguages";
+import { isMobileDevice } from "@/utils/device";
+
+/** Errors that are normal on mobile — should not tear down the listening session */
+const BENIGN_STT_ERRORS = new Set([
+  "no-speech",
+  "aborted",
+  "audio-capture",
+  "network",
+]);
 
 function createRecognitionInstance(): any | null {
   const SpeechRecognition =
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   if (!SpeechRecognition) return null;
   const rec = new SpeechRecognition();
-  rec.continuous = true;
+  rec.continuous = !isMobileDevice();
   rec.interimResults = true;
   rec.lang = getSpeechRecognitionLang();
   return rec;
@@ -80,11 +89,15 @@ export class BrowserVoiceProvider {
         return;
       }
 
+      if (BENIGN_STT_ERRORS.has(err)) {
+        return;
+      }
       if (onError) onError(err);
     };
 
     this.recognition.onend = () => {
-      if (this.isListening) {
+      // Mobile uses push-to-talk — avoid restart loops that flicker the UI
+      if (this.isListening && !isMobileDevice()) {
         try {
           this.recognition.start();
         } catch (restartErr) {
@@ -151,7 +164,9 @@ export class BrowserVoiceProvider {
   }
 
   public isSupported(): boolean {
-    return !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition;
+    return (
+      !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition
+    );
   }
 }
 

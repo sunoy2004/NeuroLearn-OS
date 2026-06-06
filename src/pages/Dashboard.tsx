@@ -13,6 +13,7 @@ import { AreaChart, Area, XAxis, YAxis, RadarChart, PolarGrid, PolarAngleAxis, R
 import { ChartContainer, ChartTooltipContent, ChartTooltip } from "@/components/ui/chart";
 import { useAppStore } from "@/store/appStore";
 import { cn } from "@/lib/utils";
+import { PageShell } from "@/components/PageShell";
 import type { WeakTopic, AgentStatus } from "@/types";
 
 const retentionConfig = { retention: { label: "Retention %", color: "var(--chart-1)" } };
@@ -116,8 +117,8 @@ export function Dashboard() {
     : null;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="relative rounded-xl border border-[var(--neuro-cyan)]/20 bg-card overflow-hidden p-6">
+    <PageShell>
+      <div className="relative overflow-hidden rounded-xl border border-[var(--neuro-cyan)]/20 bg-card p-4 sm:p-6">
         <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-primary/3 pointer-events-none" />
         <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
@@ -125,7 +126,7 @@ export function Dashboard() {
               <Sparkles className="size-4 text-primary" />
               <span className="text-xs uppercase tracking-widest text-primary/70 font-semibold">NEUROLEARN OS — COGNITIVE ENGINE</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight mb-1">Good morning, {profile.name}</h1>
+            <h1 className="mb-1 text-xl font-bold tracking-tight sm:text-2xl">Good morning, {profile.name}</h1>
             <p className="text-muted-foreground text-sm max-w-lg">
               Your AI learning companion has processed <span className="text-primary font-semibold">{profile.conceptsMastered} concepts</span>
               {weakTopics.length > 0 && (
@@ -164,7 +165,7 @@ export function Dashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 md:grid-cols-4 md:gap-4">
         <StatCard icon={Flame} label="Study Streak" value={`${profile.studyStreak}d`} sub={profile.studyStreak > 0 ? "Consecutive lecture days" : "Record a lecture to start"} color="text-[var(--neuro-amber)]" />
         <StatCard icon={Clock} label="Study Hours" value={profile.totalHours} sub={`${lectures.length} lecture${lectures.length !== 1 ? "s" : ""} logged`} color="text-[var(--neuro-cyan)]" />
         <StatCard icon={Brain} label="Key Concepts" value={profile.conceptsMastered || concepts.length} sub={`${concepts.length} in knowledge graph`} color="text-[var(--neuro-green)]" />
@@ -340,6 +341,6 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

@@ -15,6 +15,7 @@ import { quizStore } from "@/services/quizStore";
 import { agentRegistry } from "@/agents/agentRegistry";
 import { apiRequest } from "@/services/api";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { PageHeader, PageShell } from "@/components/PageShell";
 function FlashcardViewer({ cards }: { cards?: Flashcard[] }) {
   const activeFlashcardIndex = useAppStore((s) => s.activeFlashcardIndex);
   const setActiveFlashcardIndex = useAppStore((s) => s.setActiveFlashcardIndex);
@@ -544,13 +545,12 @@ export function RevisionCenter() {
   const selectedLecture = lectures.find(l => l.id === selectedLectureId) || lectures[0];
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Revision Center</h2>
-          <p className="text-sm text-muted-foreground">SM-2 spaced repetition · Forgetting curve · Agent scheduling</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageShell>
+      <PageHeader
+        title="Revision Center"
+        description="SM-2 spaced repetition · Forgetting curve · Agent scheduling"
+        actions={
+          <>
           {flashcards.length > 0 && (
             <Badge variant="outline" className="text-[10px] text-[var(--neuro-rose)] border-[var(--neuro-rose)]/30 gap-1">
               <AlertTriangle className="size-3" /> {flashcards.length} Due Today
@@ -590,8 +590,9 @@ export function RevisionCenter() {
               </div>
             </DialogContent>
           </Dialog>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Learning Goals Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -647,7 +648,7 @@ export function RevisionCenter() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="mb-4">
+            <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start gap-1">
               <TabsTrigger value="flashcards" className="gap-2">
                 <BookOpen className="size-3.5" /> Flashcards
               </TabsTrigger>
@@ -989,6 +990,6 @@ export function RevisionCenter() {
           </Card>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

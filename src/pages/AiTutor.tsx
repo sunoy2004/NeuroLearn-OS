@@ -242,7 +242,7 @@ export function AiTutor() {
   }
 
   return (
-    <div className="flex h-full min-h-[calc(100svh-3rem)] w-full overflow-hidden">
+    <div className="flex h-full min-h-[calc(100svh-3rem-5rem)] w-full overflow-hidden md:min-h-[calc(100svh-3rem)]">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="shrink-0 flex items-center justify-between gap-3 border-b border-border/50 bg-background/90 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">

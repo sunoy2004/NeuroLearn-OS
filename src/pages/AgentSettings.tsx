@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Settings, RefreshCw, CheckCircle, XCircle, Zap, Cpu } from "lucide-react";
 import { type AgentHealthRecord } from "@/config/agentConfigLoader";
 import { agentBootstrap } from "@/agents/bootstrap";
+import { PageShell } from "@/components/PageShell";
 import { cn } from "@/lib/utils";
 
 function AgentConfigRow({ agent }: { agent: AgentHealthRecord }) {
@@ -71,17 +72,17 @@ export function AgentSettings() {
   const activeCount = agents.filter((a) => a.enabled).length;
 
   return (
-    <div className="p-6 space-y-6 max-w-[900px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
-            <Settings className="size-5 text-primary" /> Agent Configuration
+    <PageShell narrow>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight sm:text-xl">
+            <Settings className="size-5 shrink-0 text-primary" /> Agent Configuration
           </h2>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             Distributed LLM settings — each agent has isolated provider, model, and API key
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleReload} disabled={reloading} className="gap-2">
+        <Button variant="outline" size="sm" onClick={handleReload} disabled={reloading} className="w-full gap-2 sm:w-auto">
           <RefreshCw className={cn("size-3.5", reloading && "animate-spin")} />
           Reload Config
         </Button>
@@ -118,6 +119,6 @@ export function AgentSettings() {
           ))
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }

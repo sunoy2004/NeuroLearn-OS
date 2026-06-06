@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import { isMobileDevice } from "@/utils/device";
 import { useAppStore } from "@/store/appStore";
 import { useAgent } from "@/context/AgentContext";
 import { VoiceWaveform } from "./VoiceWaveform";
 import { commandLifecycleManager } from "@/services/voice/commandLifecycleManager";
+import { persistentVoiceSessionManager } from "@/services/voice/sessionManager";
 import { 
   Brain, 
   Mic, 
@@ -39,6 +41,8 @@ export function AiCompanionPanel() {
   const isProcessing = voiceStatus === "thinking" || voiceStatus === "executing";
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const userDismissedPanel = useRef(false);
+  const isMobile = isMobileDevice();
 
   // Auto-scroll logs to bottom when new notifications arrive
   useEffect(() => {
@@ -47,18 +51,29 @@ export function AiCompanionPanel() {
     }
   }, [agentNotifications, isExpanded]);
 
-  // Automatically expand the panel when speech starts, is processing, or is streaming responses
+  // Expand when user starts voice — not on auto-resume flicker (mobile)
   useEffect(() => {
+    if (userDismissedPanel.current) return;
     if (isListening || isProcessing || aiResponseStream) {
       setIsExpanded(true);
     }
-  }, [isListening, isProcessing, aiResponseStream]);
+  }, [isListening, isProcessing, aiResponseStream, setIsExpanded]);
+
+  const collapsePanel = useCallback(() => {
+    userDismissedPanel.current = true;
+    setIsExpanded(false);
+  }, [setIsExpanded]);
 
   const toggleListening = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isListening || isProcessing) {
-      commandLifecycleManager.executeStop();
+      if (isListening) {
+        void persistentVoiceSessionManager.stopMicrophone();
+      } else {
+        commandLifecycleManager.executeStop();
+      }
     } else {
+      userDismissedPanel.current = false;
       startListening();
       setIsExpanded(true);
     }
@@ -90,11 +105,11 @@ export function AiCompanionPanel() {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none select-none">
+    <div className="safe-bottom pointer-events-none fixed bottom-4 right-4 left-4 z-50 flex flex-col items-end gap-3 select-none sm:bottom-6 sm:left-auto sm:right-6">
       
       {/* Expanded Companion HUD Card */}
       {isExpanded && (
-        <div className="pointer-events-auto w-85 max-h-[440px] flex flex-col overflow-hidden rounded-2xl border border-border/40 bg-card/85 backdrop-blur-lg shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className="pointer-events-auto flex max-h-[min(70vh,440px)] w-full max-w-full flex-col overflow-hidden rounded-2xl border border-border/40 bg-card/90 backdrop-blur-lg shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300 sm:max-w-[340px]">
           
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border/30 bg-muted/20 px-4 py-3">
@@ -126,8 +141,8 @@ export function AiCompanionPanel() {
                 </span>
               </div>
               <button 
-                onClick={() => setIsExpanded(false)}
-                className="rounded-md p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                onClick={collapsePanel}
+                className="touch-target rounded-md p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
               >
                 <ChevronDown className="size-3.5" />
               </button>
@@ -171,7 +186,7 @@ export function AiCompanionPanel() {
           )}
 
           {/* Action Log / Notifications */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[200px] min-h-[120px] no-scrollbar">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-2 max-h-[200px] min-h-[100px] no-scrollbar sm:min-h-[120px]">
             <div className="flex items-center justify-between">
               <span className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground/60">Execution Logs</span>
               {agentNotifications.length > 0 && (
@@ -220,19 +235,21 @@ export function AiCompanionPanel() {
 
           {/* Quick Guidance Prompt Helper */}
           <div className="border-t border-border/30 bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground text-center italic">
-            Try: &quot;Go to AI Tutor&quot; or &quot;Start database lecture&quot;
+            {isMobile
+              ? "Tap the mic when finished speaking."
+              : "Try: \"Go to AI Tutor\" or \"Start database lecture\""}
           </div>
         </div>
       )}
 
       {/* Floating Action Button (FAB) / Trigger */}
-      <div className="flex gap-2 items-center pointer-events-auto">
+      <div className="pointer-events-auto flex items-center gap-2 self-end">
         
         {/* Toggle HUD Button */}
         {!isExpanded && (
           <button
             onClick={() => setIsExpanded(true)}
-            className="flex items-center justify-center size-10 rounded-full border border-border/40 bg-card/90 backdrop-blur-md shadow-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200"
+            className="touch-target flex items-center justify-center size-11 rounded-full border border-border/40 bg-card/90 backdrop-blur-md shadow-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200 sm:size-10"
             title="Open Companion Logs"
           >
             <ChevronUp className="size-4" />
@@ -244,7 +261,7 @@ export function AiCompanionPanel() {
           onClick={toggleListening}
           disabled={isProcessing}
           className={cn(
-            "relative flex items-center justify-center size-12 rounded-full border transition-all duration-300 shadow-xl",
+            "touch-target relative flex items-center justify-center size-14 rounded-full border transition-all duration-300 shadow-xl sm:size-12",
             isListening 
               ? "bg-red-500 border-red-400 text-white neuro-glow" 
               : "bg-primary border-primary/40 text-primary-foreground hover:scale-105 neuro-glow-sm"

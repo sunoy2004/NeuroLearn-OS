@@ -8,6 +8,7 @@ import { Mic, Upload, Square, FileAudio, Brain, Tag, Clock, CheckCircle, Zap, Bo
 import { useAppStore } from "@/store/appStore";
 import { agentRegistry } from "@/agents/agentRegistry";
 import { cn } from "@/lib/utils";
+import { PageHeader, PageShell } from "@/components/PageShell";
 import { apiRequest, uploadFile } from "@/services/api";
 import { useAgent } from "@/context/AgentContext";
 import { persistentVoiceSessionManager } from "@/services/voice/sessionManager";
@@ -728,36 +729,36 @@ export function LectureStudio() {
   const linesToRender = activeLectureTranscript;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">Lecture Studio</h2>
-          <p className="text-sm text-muted-foreground">Voice capture · Real-time transcription · Semantic memory</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select
-            value={speechLanguage}
-            onValueChange={(v) => {
-              setSpeechLanguage(v);
-              setStoredSpeechLanguageCode(v);
-            }}
-            disabled={isRecording}
-          >
-            <SelectTrigger className="w-[200px] h-8 text-xs">
-              <SelectValue placeholder="Speech language" />
-            </SelectTrigger>
-            <SelectContent>
-              {SPEECH_LANGUAGES.map((lang) => (
-                <SelectItem key={lang.code} value={lang.code} className="text-xs">
-                  {lang.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Badge variant="outline" className="text-[10px] text-[var(--neuro-cyan)] border-[var(--neuro-cyan)]/30">Voice Active</Badge>
-          <Badge variant="outline" className="text-[10px] text-[var(--neuro-green)] border-[var(--neuro-green)]/30">Agents Active</Badge>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Lecture Studio"
+        description="Voice capture · Real-time transcription · Semantic memory"
+        actions={
+          <>
+            <Select
+              value={speechLanguage}
+              onValueChange={(v) => {
+                setSpeechLanguage(v);
+                setStoredSpeechLanguageCode(v);
+              }}
+              disabled={isRecording}
+            >
+              <SelectTrigger className="h-9 w-full text-xs sm:h-8 sm:w-[200px]">
+                <SelectValue placeholder="Speech language" />
+              </SelectTrigger>
+              <SelectContent>
+                {SPEECH_LANGUAGES.map((lang) => (
+                  <SelectItem key={lang.code} value={lang.code} className="text-xs">
+                    {lang.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Badge variant="outline" className="text-[10px] text-[var(--neuro-cyan)] border-[var(--neuro-cyan)]/30">Voice Active</Badge>
+            <Badge variant="outline" className="text-[10px] text-[var(--neuro-green)] border-[var(--neuro-green)]/30">Agents Active</Badge>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
@@ -1158,6 +1159,6 @@ export function LectureStudio() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }
