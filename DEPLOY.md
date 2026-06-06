@@ -451,6 +451,7 @@ Local `.env` is unchanged. Production uses Render env UIs only (`VITE_*` on the 
 | Qdrant connection error | Check `QDRANT_URL` + `QDRANT_API_KEY` on **both** Python services |
 | Agent disabled in health | Set missing `*_AGENT_LYZR_ID` in Render env |
 | CORS errors | Backends default to `CORS_ORIGINS=["*"]` — works with any Render frontend URL |
+| Services sleep on free tier | API service runs APScheduler keep-alive pings every 10 min — set `KEEP_ALIVE_ENABLED=true` on **neurolearn-api** only |
 
 ---
 

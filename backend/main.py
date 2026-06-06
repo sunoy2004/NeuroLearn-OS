@@ -9,6 +9,7 @@ from backend.services.db_service import seed_database
 from backend.services.qdrant_service import initialize_qdrant
 
 from backend.routers import voice, tutor, quiz, revision, analytics, graph, stack
+from backend.scheduler.scheduler import start_scheduler, stop_scheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,10 +25,13 @@ async def lifespan(app: FastAPI):
         
     # 3. Bootstrap Qdrant Collections
     initialize_qdrant()
+
+    # 4. Keep Render services awake (health pings every 10 min)
+    start_scheduler()
     
     yield
     
-    # Shutdown logic (if any)
+    stop_scheduler()
     print("NeuroLearn OS backend server shutting down.")
 
 app = FastAPI(

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     CORS_ORIGINS: List[str] = ["*"]
+
+    # Render keep-alive (APScheduler — disable locally if desired)
+    KEEP_ALIVE_ENABLED: bool = True
+    KEEP_ALIVE_INTERVAL_MINUTES: int = 10
+    AGENT_HEALTH_URL: str = "https://neurolearn-agent.onrender.com/agents/health"
+    API_HEALTH_URL: str = "https://neurolearn-api-k19o.onrender.com/api/stack/health"
     
     class Config:
         env_file = str(env_file_path) if env_file_path.exists() else ".env"
